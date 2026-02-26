@@ -31,8 +31,18 @@ export function enforceSameOrigin(request: Request): Response | null {
   }
 
   try {
-    const requestOrigin = new URL(request.url).origin;
-    if (origin !== requestOrigin) {
+    const originUrl = new URL(origin);
+    const expectedHost =
+      request.headers.get('x-forwarded-host')?.trim().toLowerCase() ??
+      request.headers.get('host')?.trim().toLowerCase() ??
+      '';
+
+    if (!expectedHost) {
+      return null;
+    }
+
+    const originHost = originUrl.host.trim().toLowerCase();
+    if (originHost !== expectedHost) {
       return jsonError('Cross-origin request blocked.', 403);
     }
   } catch {

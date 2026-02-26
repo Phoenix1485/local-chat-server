@@ -72,6 +72,38 @@ export function getMysqlPool(): Pool {
   return globalThis.__mysqlPool;
 }
 
+async function hasColumn(pool: Pool, tableName: string, columnName: string): Promise<boolean> {
+  const [rows] = await pool.query(
+    `
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = DATABASE()
+        AND table_name = ?
+        AND column_name = ?
+      LIMIT 1
+    `,
+    [tableName, columnName]
+  );
+
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+async function hasIndex(pool: Pool, tableName: string, indexName: string): Promise<boolean> {
+  const [rows] = await pool.query(
+    `
+      SELECT 1
+      FROM information_schema.statistics
+      WHERE table_schema = DATABASE()
+        AND table_name = ?
+        AND index_name = ?
+      LIMIT 1
+    `,
+    [tableName, indexName]
+  );
+
+  return Array.isArray(rows) && rows.length > 0;
+}
+
 async function createSchema(): Promise<void> {
   const pool = getMysqlPool();
   const now = Date.now();
@@ -172,14 +204,28 @@ async function createSchema(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
 
-  await pool.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS chat_id CHAR(36) NULL AFTER id');
-  await pool.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS chat_name VARCHAR(80) NULL AFTER chat_id');
-  await pool.query('ALTER TABLE messages ADD INDEX IF NOT EXISTS idx_messages_chat_id (chat_id)');
-  await pool.query('ALTER TABLE messages ADD INDEX IF NOT EXISTS idx_messages_chat_created (chat_id, created_at)');
+  if (!(await hasColumn(pool, 'messages', 'chat_id'))) {
+    await pool.query('ALTER TABLE messages ADD COLUMN chat_id CHAR(36) NULL AFTER id');
+  }
+  if (!(await hasColumn(pool, 'messages', 'chat_name'))) {
+    await pool.query('ALTER TABLE messages ADD COLUMN chat_name VARCHAR(80) NULL AFTER chat_id');
+  }
+  if (!(await hasIndex(pool, 'messages', 'idx_messages_chat_id'))) {
+    await pool.query('ALTER TABLE messages ADD INDEX idx_messages_chat_id (chat_id)');
+  }
+  if (!(await hasIndex(pool, 'messages', 'idx_messages_chat_created'))) {
+    await pool.query('ALTER TABLE messages ADD INDEX idx_messages_chat_created (chat_id, created_at)');
+  }
 
-  await pool.query('ALTER TABLE uploads ADD COLUMN IF NOT EXISTS chat_id CHAR(36) NULL AFTER id');
-  await pool.query('ALTER TABLE uploads ADD INDEX IF NOT EXISTS idx_uploads_chat_id (chat_id)');
-  await pool.query('ALTER TABLE rate_limits ADD INDEX IF NOT EXISTS idx_rate_limits_reset_at (reset_at)');
+  if (!(await hasColumn(pool, 'uploads', 'chat_id'))) {
+    await pool.query('ALTER TABLE uploads ADD COLUMN chat_id CHAR(36) NULL AFTER id');
+  }
+  if (!(await hasIndex(pool, 'uploads', 'idx_uploads_chat_id'))) {
+    await pool.query('ALTER TABLE uploads ADD INDEX idx_uploads_chat_id (chat_id)');
+  }
+  if (!(await hasIndex(pool, 'rate_limits', 'idx_rate_limits_reset_at'))) {
+    await pool.query('ALTER TABLE rate_limits ADD INDEX idx_rate_limits_reset_at (reset_at)');
+  }
 
   await pool.query<ResultSetHeader>(
     `
@@ -222,7 +268,10 @@ async function createSchema(): Promise<void> {
 
 export async function ensureMysqlSchema(): Promise<void> {
   if (!globalThis.__mysqlInitPromise) {
-    globalThis.__mysqlInitPromise = createSchema();
+    globalThis.__mysqlInitPromise = createSchema().catch((error) => {
+      globalThis.__mysqlInitPromise = undefined;
+      throw error;
+    });
   }
 
   await globalThis.__mysqlInitPromise;
