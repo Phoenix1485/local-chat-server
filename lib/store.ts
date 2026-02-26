@@ -167,11 +167,18 @@ class ChatStore {
   async getUser(userId: string): Promise<UserSession | null> {
     const redis = getRedisClient();
     const raw = await redis.hget<string>(KEYS.users, userId);
-    return parseJson<UserSession>(raw);
+    const direct = parseJson<UserSession>(raw);
+    if (direct) {
+      return direct;
+    }
+
+    // Fallback for providers/setups where field lookup can miss while hash scan still works.
+    const users = await this.listUsers();
+    return users.find((user) => user.id === userId) ?? null;
   }
 
-  async setUserStatus(userId: string, status: UserStatus): Promise<UserSession | null> {
-    const user = await this.getUser(userId);
+  async setUserStatus(userId: string, status: UserStatus, currentUser?: UserSession): Promise<UserSession | null> {
+    const user = currentUser ?? (await this.getUser(userId));
     if (!user) {
       return null;
     }
@@ -180,7 +187,7 @@ class ChatStore {
     user.updatedAt = Date.now();
 
     const redis = getRedisClient();
-    await redis.hset(KEYS.users, { [user.id]: JSON.stringify(user) });
+    await redis.hset(KEYS.users, { [userId]: JSON.stringify(user) });
 
     return user;
   }

@@ -43,7 +43,7 @@ export async function POST(request: Request): Promise<Response> {
   const nextStatus =
     payload.action === 'approve' ? 'approved' : payload.action === 'reject' ? 'rejected' : 'pending';
 
-  const updatedUser = await chatStore.setUserStatus(sessionId, nextStatus);
+  const updatedUser = await chatStore.setUserStatus(sessionId, nextStatus, currentUser);
   if (!updatedUser) {
     return jsonError('Session not found.', 404);
   }
