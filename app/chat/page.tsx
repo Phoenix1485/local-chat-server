@@ -2,7 +2,7 @@
 
 import { FormEvent, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import type { ChatContext, ChatMessage, UserStatus } from '@/types/chat';
+import type { ChatAttachment, ChatContext, ChatMessage, UserStatus } from '@/types/chat';
 
 function formatTime(epochMs: number): string {
   return new Date(epochMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -17,6 +17,29 @@ const statusLabels: Record<UserStatus, string> = {
 type JsonErrorPayload = {
   error?: string;
 };
+
+type ChatDocument = ChatAttachment & {
+  messageId: string;
+  messageText: string;
+  messageCreatedAt: number;
+  userName: string;
+};
+
+function canPreviewDocument(doc: ChatDocument): boolean {
+  const mime = doc.mimeType.toLowerCase();
+  if (mime.startsWith('image/')) {
+    return true;
+  }
+  if (mime === 'application/pdf') {
+    return true;
+  }
+  if (mime.startsWith('text/')) {
+    return true;
+  }
+
+  const lowerName = doc.fileName.toLowerCase();
+  return lowerName.endsWith('.pdf') || lowerName.endsWith('.txt') || lowerName.endsWith('.md');
+}
 
 async function readJsonError(response: Response, fallback: string): Promise<string> {
   try {
@@ -40,6 +63,8 @@ function ChatPageContent() {
   const [text, setText] = useState('');
   const [newChatName, setNewChatName] = useState('');
   const [inviteTargetId, setInviteTargetId] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeDocument, setActiveDocument] = useState<ChatDocument | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -138,6 +163,7 @@ function ChatPageContent() {
 
     setConnectionState('connecting');
     setMessages([]);
+    setActiveDocument(null);
 
     const stream = new EventSource(
       `/api/chat/stream?sessionId=${encodeURIComponent(sessionId)}&chatId=${encodeURIComponent(activeChatId)}`
@@ -380,6 +406,54 @@ function ChatPageContent() {
   const chats = context?.chats ?? [];
   const members = context?.members ?? [];
   const inviteCandidates = context?.inviteCandidates ?? [];
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+
+  const documents = useMemo<ChatDocument[]>(() => {
+    const rows: ChatDocument[] = [];
+    for (const message of messages) {
+      if (!message.attachments?.length) {
+        continue;
+      }
+      for (const attachment of message.attachments) {
+        rows.push({
+          ...attachment,
+          messageId: message.id,
+          messageText: message.text,
+          messageCreatedAt: message.createdAt,
+          userName: message.userName
+        });
+      }
+    }
+    return rows;
+  }, [messages]);
+
+  const filteredMessages = useMemo(() => {
+    if (!normalizedSearch) {
+      return messages;
+    }
+
+    return messages.filter((message) => {
+      const content = `${message.userName} ${message.text}`.toLowerCase();
+      const attachmentText =
+        message.attachments?.map((attachment) => attachment.fileName.toLowerCase()).join(' ') ?? '';
+      return content.includes(normalizedSearch) || attachmentText.includes(normalizedSearch);
+    });
+  }, [messages, normalizedSearch]);
+
+  const filteredDocuments = useMemo(() => {
+    if (!normalizedSearch) {
+      return documents;
+    }
+
+    return documents.filter((doc) => {
+      const content = `${doc.fileName} ${doc.userName} ${doc.messageText}`.toLowerCase();
+      return content.includes(normalizedSearch);
+    });
+  }, [documents, normalizedSearch]);
+
+  const activeDocumentUrl = activeDocument
+    ? `/api/upload/${activeDocument.id}?sessionId=${encodeURIComponent(sessionId)}&chatId=${encodeURIComponent(activeChatId)}`
+    : '';
 
   return (
     <main className="grid gap-4 md:grid-cols-[1fr_320px]">
@@ -394,8 +468,26 @@ function ChatPageContent() {
           </span>
         </div>
 
+        <div className="mb-3 flex gap-2">
+          <input
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Suche in Nachrichten und Dokumenten"
+            className="glass-input flex-1 text-sm"
+          />
+          {searchQuery ? (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="btn-soft"
+            >
+              Reset
+            </button>
+          ) : null}
+        </div>
+
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-          {messages.map((message) => (
+          {filteredMessages.map((message) => (
             <article key={message.id} className="glass-card rounded-lg px-3 py-2">
               <header className="mb-1 flex items-center justify-between gap-2">
                 <span className="text-sm font-semibold text-accent">{message.userName}</span>
@@ -406,20 +498,40 @@ function ChatPageContent() {
                 <ul className="mt-2 space-y-1 text-sm">
                   {message.attachments.map((attachment) => (
                     <li key={attachment.id}>
-                      <a
-                        className="text-cyan-300 underline hover:text-cyan-200"
-                        href={`/api/upload/${attachment.id}?sessionId=${encodeURIComponent(sessionId)}&chatId=${encodeURIComponent(activeChatId)}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        {attachment.fileName} ({Math.ceil(attachment.size / 1024)} KB)
-                      </a>
+                      <div className="flex items-center justify-between gap-2">
+                        <a
+                          className="text-cyan-300 underline hover:text-cyan-200"
+                          href={`/api/upload/${attachment.id}?sessionId=${encodeURIComponent(sessionId)}&chatId=${encodeURIComponent(activeChatId)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {attachment.fileName} ({Math.ceil(attachment.size / 1024)} KB)
+                        </a>
+                        <button
+                          type="button"
+                          className="btn-soft px-2 py-1 text-xs"
+                          onClick={() =>
+                            setActiveDocument({
+                              ...attachment,
+                              messageId: message.id,
+                              messageText: message.text,
+                              messageCreatedAt: message.createdAt,
+                              userName: message.userName
+                            })
+                          }
+                        >
+                          Anzeigen
+                        </button>
+                      </div>
                     </li>
                   ))}
                 </ul>
               ) : null}
             </article>
           ))}
+          {filteredMessages.length === 0 ? (
+            <p className="surface-muted text-sm">Keine Treffer fuer diese Suche.</p>
+          ) : null}
           <div ref={bottomRef} />
         </div>
 
@@ -482,6 +594,38 @@ function ChatPageContent() {
               </li>
             ))}
             {members.length === 0 ? <li className="surface-muted text-sm">Keine Mitglieder gefunden.</li> : null}
+          </ul>
+        </section>
+
+        <section>
+          <h2 className="surface-muted text-xs font-semibold uppercase tracking-wide">Dokumente ({filteredDocuments.length})</h2>
+          <ul className="mt-2 max-h-48 space-y-2 overflow-y-auto">
+            {filteredDocuments.map((doc) => (
+              <li key={doc.id} className="glass-card rounded-md px-2 py-2 text-xs">
+                <p className="truncate font-semibold text-slate-100">{doc.fileName}</p>
+                <p className="surface-muted mt-0.5 truncate">
+                  {doc.userName} - {formatTime(doc.messageCreatedAt)}
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    className="btn-soft px-2 py-1 text-xs"
+                    onClick={() => setActiveDocument(doc)}
+                  >
+                    Anzeigen
+                  </button>
+                  <a
+                    className="btn-soft px-2 py-1 text-xs"
+                    href={`/api/upload/${doc.id}?sessionId=${encodeURIComponent(sessionId)}&chatId=${encodeURIComponent(activeChatId)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Tab
+                  </a>
+                </div>
+              </li>
+            ))}
+            {filteredDocuments.length === 0 ? <li className="surface-muted text-sm">Keine Dokumente gefunden.</li> : null}
           </ul>
         </section>
 
@@ -573,6 +717,51 @@ function ChatPageContent() {
           </button>
         </section>
       </aside>
+
+      {activeDocument ? (
+        <div className="fixed inset-0 z-50 bg-black/70 p-4 backdrop-blur-sm">
+          <div className="glass-panel mx-auto flex h-full w-full max-w-5xl flex-col rounded-2xl p-4">
+            <div className="mb-3 flex items-center justify-between gap-3 border-b border-slate-700/70 pb-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-slate-100">{activeDocument.fileName}</p>
+                <p className="surface-muted text-xs">
+                  {activeDocument.userName} - {formatTime(activeDocument.messageCreatedAt)}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  className="btn-soft px-3 py-1 text-xs"
+                  href={activeDocumentUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Neu tab
+                </a>
+                <button
+                  type="button"
+                  className="btn-soft px-3 py-1 text-xs"
+                  onClick={() => setActiveDocument(null)}
+                >
+                  Schliessen
+                </button>
+              </div>
+            </div>
+
+            {canPreviewDocument(activeDocument) ? (
+              <iframe
+                title={`preview-${activeDocument.id}`}
+                src={activeDocumentUrl}
+                className="min-h-0 flex-1 rounded-lg border border-slate-700/80 bg-slate-950/80"
+              />
+            ) : (
+              <div className="glass-card flex min-h-0 flex-1 flex-col items-center justify-center rounded-lg p-6 text-center">
+                <p className="text-sm text-slate-100">Dieses Dokument kann nicht inline angezeigt werden.</p>
+                <p className="surface-muted mt-2 text-xs">Oeffne es in einem neuen Tab.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
