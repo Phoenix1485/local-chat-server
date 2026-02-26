@@ -12,6 +12,7 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
 
   const fetchSnapshot = useCallback(async (token: string): Promise<AdminSnapshot> => {
     const response = await fetch('/api/admin/state', {
@@ -141,7 +142,18 @@ export default function AdminPage() {
   const recentMessages = snapshot?.recentMessages ?? [];
   const activeChats = snapshot?.activeChats ?? [];
   const deactivatedChats = snapshot?.deactivatedChats ?? [];
+  const allUsers = snapshot?.users ?? [];
   const pendingCount = useMemo(() => pendingUsers.length, [pendingUsers.length]);
+
+  useEffect(() => {
+    if (!snapshot) {
+      setSelectedUserIds([]);
+      return;
+    }
+
+    const validIds = new Set(snapshot.users.map((user) => user.id));
+    setSelectedUserIds((prev) => prev.filter((id) => validIds.has(id)));
+  }, [snapshot]);
 
   const readServerError = async (response: Response, fallback: string): Promise<string> => {
     const contentType = response.headers.get('content-type') ?? '';
@@ -221,6 +233,63 @@ export default function AdminPage() {
     }
   };
 
+  const deleteAccounts = async (mode: 'selected' | 'all') => {
+    if (!activeToken) {
+      setError('Admin-Token fehlt.');
+      return;
+    }
+
+    const selected = mode === 'selected' ? selectedUserIds : [];
+    if (mode === 'selected' && selected.length === 0) {
+      setError('Bitte mindestens einen Account auswaehlen.');
+      return;
+    }
+
+    const confirmed =
+      mode === 'all'
+        ? window.confirm('Wirklich ALLE Accounts loeschen? Diese Aktion ist nicht rueckgaengig.')
+        : window.confirm(`Wirklich ${selected.length} ausgewaehlte Accounts loeschen?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsUpdating(true);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-token': activeToken
+        },
+        body: JSON.stringify({
+          mode,
+          userIds: selected
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(await readServerError(response, 'Accounts konnten nicht geloescht werden.'));
+      }
+
+      if (mode === 'all') {
+        setSelectedUserIds([]);
+      } else {
+        const toRemove = new Set(selected);
+        setSelectedUserIds((prev) => prev.filter((id) => !toRemove.has(id)));
+      }
+
+      const next = await fetchSnapshot(activeToken);
+      setSnapshot(next);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Accounts konnten nicht geloescht werden.');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   return (
     <main className="space-y-4">
       <section className="glass-panel rounded-2xl p-4">
@@ -280,6 +349,68 @@ export default function AdminPage() {
         ) : null}
         {error ? <p className="alert-error mt-3 rounded-md px-3 py-2 text-sm">{error}</p> : null}
       </section>
+
+      {snapshot ? <section className="glass-panel rounded-2xl p-4">
+        <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">Accounts loeschen</h2>
+        <p className="surface-muted mt-1 text-sm">
+          Waehle einen, mehrere oder alle Accounts aus und loesche sie direkt.
+        </p>
+
+        <select
+          multiple
+          value={selectedUserIds}
+          onChange={(event) => {
+            const values = Array.from(event.target.selectedOptions).map((option) => option.value);
+            setSelectedUserIds(values);
+          }}
+          className="glass-input mt-3 h-48 text-sm"
+        >
+          {allUsers.map((user) => (
+            <option key={user.id} value={user.id}>
+              {user.name} [{user.status}]
+            </option>
+          ))}
+        </select>
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={isUpdating || allUsers.length === 0}
+            onClick={() => setSelectedUserIds(allUsers.map((user) => user.id))}
+            className="btn-soft disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Alle auswaehlen
+          </button>
+          <button
+            type="button"
+            disabled={isUpdating || selectedUserIds.length === 0}
+            onClick={() => setSelectedUserIds([])}
+            className="btn-soft disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Auswahl leeren
+          </button>
+          <button
+            type="button"
+            disabled={isUpdating || selectedUserIds.length === 0}
+            onClick={() => {
+              void deleteAccounts('selected');
+            }}
+            className="rounded-md bg-rose-500/80 px-3 py-2 text-sm font-semibold text-rose-50 hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Ausgewaehlte loeschen ({selectedUserIds.length})
+          </button>
+          <button
+            type="button"
+            disabled={isUpdating || allUsers.length === 0}
+            onClick={() => {
+              void deleteAccounts('all');
+            }}
+            className="rounded-md border border-rose-500/35 bg-rose-500/10 px-3 py-2 text-sm font-semibold text-rose-200 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Alle Accounts loeschen ({allUsers.length})
+          </button>
+        </div>
+      </section> : null}
 
       {snapshot ? <section className="grid gap-4 md:grid-cols-2">
         <div className="glass-panel rounded-2xl p-4">

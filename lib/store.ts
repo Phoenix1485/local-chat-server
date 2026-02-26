@@ -323,6 +323,28 @@ class ChatStore {
     return rows.map(mapUser);
   }
 
+  async deleteUsers(userIds?: string[]): Promise<number> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+
+    if (Array.isArray(userIds) && userIds.length > 0) {
+      const ids = uniqueIds(userIds);
+      if (ids.length === 0) {
+        return 0;
+      }
+
+      const placeholders = ids.map(() => '?').join(',');
+      const [result] = await pool.query<ResultSetHeader>(
+        `DELETE FROM users WHERE id IN (${placeholders})`,
+        ids
+      );
+      return result.affectedRows ?? 0;
+    }
+
+    const [result] = await pool.query<ResultSetHeader>('DELETE FROM users');
+    return result.affectedRows ?? 0;
+  }
+
   async getChat(chatId: string, options?: { includeDeactivated?: boolean }): Promise<ChatRoom | null> {
     await this.ensureReady();
     const pool = getMysqlPool();
