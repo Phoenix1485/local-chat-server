@@ -174,6 +174,8 @@ function mapMessage(row: MessageRow): ChatMessage {
 }
 
 class ChatStore {
+  private lastDeactivatedCleanupAt = 0;
+
   private async ensureReady(): Promise<void> {
     await ensureMysqlSchema();
   }
@@ -190,7 +192,12 @@ class ChatStore {
     return now - lastSeenAt <= CHAT_LIMITS.userOnlineTtlMs;
   }
 
-  private async cleanupDeactivatedChats(now = Date.now()): Promise<void> {
+  private async cleanupDeactivatedChats(now = Date.now(), force = false): Promise<void> {
+    if (!force && now - this.lastDeactivatedCleanupAt < 5 * 60_000) {
+      return;
+    }
+
+    this.lastDeactivatedCleanupAt = now;
     await this.ensureReady();
     const pool = getMysqlPool();
     const minDeactivatedAt = now - CHAT_LIMITS.deactivatedChatRetentionMs;
@@ -796,6 +803,28 @@ class ChatStore {
         ORDER BY created_at ASC
       `,
       [chatId, safeLimit]
+    );
+
+    return rows.map(mapMessage);
+  }
+
+  async getMessagesSince(chatId: string, sinceCreatedAt: number, limit = 120): Promise<ChatMessage[]> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+
+    const safeLimit = Math.max(1, Math.floor(limit));
+    const since = Number.isFinite(sinceCreatedAt) ? Math.max(0, Math.floor(sinceCreatedAt)) : 0;
+
+    const [rows] = await pool.query<MessageRow[]>(
+      `
+        SELECT id, chat_id, chat_name, user_id, user_name, text, created_at, attachments_json
+        FROM messages
+        WHERE chat_id = ?
+          AND created_at > ?
+        ORDER BY created_at ASC
+        LIMIT ?
+      `,
+      [chatId, since, safeLimit]
     );
 
     return rows.map(mapMessage);

@@ -1,5 +1,5 @@
 import { CHAT_LIMITS } from '@/lib/config';
-import { jsonError } from '@/lib/http';
+import { isUuid, jsonError } from '@/lib/http';
 import { createSseResponse } from '@/lib/sse';
 import { chatStore } from '@/lib/store';
 
@@ -18,6 +18,10 @@ export async function GET(request: Request): Promise<Response> {
 
   if (!chatId) {
     return jsonError('Missing chatId.', 400);
+  }
+
+  if (!isUuid(sessionId) || !isUuid(chatId)) {
+    return jsonError('Invalid sessionId or chatId.', 422);
   }
 
   const user = await chatStore.getUser(sessionId);
@@ -41,6 +45,7 @@ export async function GET(request: Request): Promise<Response> {
   return createSseResponse(request, (send, close) => {
     let closed = false;
     let currentStatus = user.status;
+    let lastSeenCreatedAt = initialMessages.at(-1)?.createdAt ?? 0;
     const sentMessageIds = new Set(initialMessages.map((message) => message.id));
 
     send('history', { messages: initialMessages });
@@ -76,13 +81,16 @@ export async function GET(request: Request): Promise<Response> {
         return;
       }
 
-      const messages = await chatStore.getRecentMessages(chatId);
+      const messages = await chatStore.getMessagesSince(chatId, lastSeenCreatedAt);
       for (const message of messages) {
         if (sentMessageIds.has(message.id)) {
           continue;
         }
 
         sentMessageIds.add(message.id);
+        if (message.createdAt > lastSeenCreatedAt) {
+          lastSeenCreatedAt = message.createdAt;
+        }
         send('message', { message });
       }
 
@@ -102,7 +110,7 @@ export async function GET(request: Request): Promise<Response> {
 
     const pollTimer = setInterval(() => {
       void poll();
-    }, 1200);
+    }, CHAT_LIMITS.streamPollMs);
 
     return () => {
       closed = true;

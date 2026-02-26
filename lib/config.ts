@@ -4,14 +4,16 @@ export const CHAT_LIMITS = {
   roomNameMinLength: 2,
   roomNameMaxLength: 48,
   messageMaxLength: 1000,
-  uploadMaxBytes: 10 * 1024 * 1024 * 1024,      // 10 GB pro Datei
-  uploadMaxTotalBytes: 20 * 1024 * 1024 * 1024,  // 10 GB gesamt
-  maxMessagesInMemory: 300,
-  maxUploadsInMemory: 120,
+  uploadMaxBytes: parsePositiveInt(process.env.CHAT_UPLOAD_MAX_BYTES, 25 * 1024 * 1024),
+  uploadMaxTotalBytes: parsePositiveInt(process.env.CHAT_UPLOAD_MAX_TOTAL_BYTES, 200 * 1024 * 1024),
+  maxMessagesInMemory: parsePositiveInt(process.env.CHAT_MAX_MESSAGES_IN_MEMORY, 300),
+  maxUploadsInMemory: parsePositiveInt(process.env.CHAT_MAX_UPLOADS_IN_MEMORY, 120),
   uploadTtlMs: 30 * 60 * 1000,
   userOnlineTtlMs: 60_000,
   deactivatedChatRetentionMs: 30 * 24 * 60 * 60 * 1000,
-  sseKeepAliveMs: 15000
+  sseKeepAliveMs: parsePositiveInt(process.env.CHAT_SSE_KEEP_ALIVE_MS, 15000),
+  streamPollMs: parsePositiveInt(process.env.CHAT_STREAM_POLL_MS, 1400),
+  adminPollMs: parsePositiveInt(process.env.CHAT_ADMIN_POLL_MS, 2000)
 } as const;
 
 export const GLOBAL_CHAT_ID = '00000000-0000-0000-0000-000000000001';

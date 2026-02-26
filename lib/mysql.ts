@@ -167,7 +167,8 @@ async function createSchema(): Promise<void> {
     CREATE TABLE IF NOT EXISTS rate_limits (
       rate_key VARCHAR(191) PRIMARY KEY,
       count INT NOT NULL,
-      reset_at BIGINT NOT NULL
+      reset_at BIGINT NOT NULL,
+      INDEX idx_rate_limits_reset_at (reset_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
 
@@ -178,6 +179,7 @@ async function createSchema(): Promise<void> {
 
   await pool.query('ALTER TABLE uploads ADD COLUMN IF NOT EXISTS chat_id CHAR(36) NULL AFTER id');
   await pool.query('ALTER TABLE uploads ADD INDEX IF NOT EXISTS idx_uploads_chat_id (chat_id)');
+  await pool.query('ALTER TABLE rate_limits ADD INDEX IF NOT EXISTS idx_rate_limits_reset_at (reset_at)');
 
   await pool.query<ResultSetHeader>(
     `

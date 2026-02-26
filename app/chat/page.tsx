@@ -124,7 +124,7 @@ function ChatPageContent() {
 
     const refreshTimer = setInterval(() => {
       void loadContext(activeChatId, { silent: true });
-    }, 2500);
+    }, 4500);
 
     return () => {
       clearInterval(refreshTimer);

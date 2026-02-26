@@ -42,6 +42,13 @@ Required:
 Optional:
 
 - `ADMIN_TOKEN_TTL_MINUTES` (default `480`)
+- `CHAT_UPLOAD_MAX_BYTES` (default `26214400` = 25 MB)
+- `CHAT_UPLOAD_MAX_TOTAL_BYTES` (default `209715200` = 200 MB)
+- `CHAT_MAX_MESSAGES_IN_MEMORY` (default `300`)
+- `CHAT_MAX_UPLOADS_IN_MEMORY` (default `120`)
+- `CHAT_SSE_KEEP_ALIVE_MS` (default `15000`)
+- `CHAT_STREAM_POLL_MS` (default `1400`)
+- `CHAT_ADMIN_POLL_MS` (default `2000`)
 
 Alternative to `MYSQL_URL`:
 

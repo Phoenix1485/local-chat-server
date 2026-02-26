@@ -1,5 +1,5 @@
 import { isAdminAuthorized } from '@/lib/adminAuth';
-import { jsonError } from '@/lib/http';
+import { enforceSameOrigin, isUuid, jsonError } from '@/lib/http';
 import { chatStore } from '@/lib/store';
 
 export const runtime = 'nodejs';
@@ -11,6 +11,11 @@ type AdminChatPayload = {
 };
 
 export async function POST(request: Request): Promise<Response> {
+  const sameOriginError = enforceSameOrigin(request);
+  if (sameOriginError) {
+    return sameOriginError;
+  }
+
   if (!isAdminAuthorized(request)) {
     return jsonError('Unauthorized.', 401);
   }
@@ -25,6 +30,10 @@ export async function POST(request: Request): Promise<Response> {
   const chatId = payload.chatId?.trim();
   if (!chatId) {
     return jsonError('Missing chatId.', 400);
+  }
+
+  if (!isUuid(chatId)) {
+    return jsonError('Invalid chatId.', 422);
   }
 
   if (payload.action !== 'reactivate') {

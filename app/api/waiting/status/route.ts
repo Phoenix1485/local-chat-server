@@ -1,4 +1,4 @@
-import { jsonError } from '@/lib/http';
+import { isUuid, jsonError } from '@/lib/http';
 import { chatStore } from '@/lib/store';
 
 export const runtime = 'nodejs';
@@ -10,6 +10,10 @@ export async function GET(request: Request): Promise<Response> {
 
   if (!sessionId) {
     return jsonError('Missing sessionId.', 400);
+  }
+
+  if (!isUuid(sessionId)) {
+    return jsonError('Invalid sessionId.', 422);
   }
 
   const user = await chatStore.getUser(sessionId);

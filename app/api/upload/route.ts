@@ -1,5 +1,5 @@
 import { CHAT_LIMITS } from '@/lib/config';
-import { jsonError } from '@/lib/http';
+import { enforceSameOrigin, isUuid, jsonError } from '@/lib/http';
 import { rateLimiter } from '@/lib/rateLimiter';
 import { chatStore } from '@/lib/store';
 import { validateMessage } from '@/lib/validation';
@@ -12,6 +12,11 @@ function sanitizeFileName(name: string): string {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const sameOriginError = enforceSameOrigin(request);
+  if (sameOriginError) {
+    return sameOriginError;
+  }
+
   const formData = await request.formData();
   const sessionId = String(formData.get('sessionId') ?? '').trim();
   const chatId = String(formData.get('chatId') ?? '').trim();
@@ -24,6 +29,10 @@ export async function POST(request: Request): Promise<Response> {
 
   if (!chatId) {
     return jsonError('Missing chatId.', 400);
+  }
+
+  if (!isUuid(sessionId) || !isUuid(chatId)) {
+    return jsonError('Invalid sessionId or chatId.', 422);
   }
 
   const limit = await rateLimiter.check(`upload:${sessionId}`, 8, 60_000);

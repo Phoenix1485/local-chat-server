@@ -1,5 +1,5 @@
 import { CHAT_LIMITS } from '@/lib/config';
-import { jsonError } from '@/lib/http';
+import { enforceSameOrigin, isUuid, jsonError } from '@/lib/http';
 import { rateLimiter } from '@/lib/rateLimiter';
 import { chatStore } from '@/lib/store';
 import { normalizeName, validateRoomName } from '@/lib/validation';
@@ -22,6 +22,10 @@ export async function GET(request: Request): Promise<Response> {
     return jsonError('Missing sessionId.', 400);
   }
 
+  if (!isUuid(sessionId) || (chatId && !isUuid(chatId))) {
+    return jsonError('Invalid sessionId or chatId.', 422);
+  }
+
   const user = await chatStore.getUser(sessionId);
   if (!user) {
     return jsonError('Session not found.', 404);
@@ -40,6 +44,11 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const sameOriginError = enforceSameOrigin(request);
+  if (sameOriginError) {
+    return sameOriginError;
+  }
+
   let payload: CreateRoomPayload;
 
   try {
@@ -56,6 +65,21 @@ export async function POST(request: Request): Promise<Response> {
     return jsonError('Missing sessionId.', 400);
   }
 
+  if (!isUuid(sessionId)) {
+    return jsonError('Invalid sessionId.', 422);
+  }
+
+  if (inviteUserIds.length > 50) {
+    return jsonError('Too many inviteUserIds (max 50).', 422);
+  }
+
+  const hasInvalidInviteId = inviteUserIds.some((id) => typeof id !== 'string' || !isUuid(id));
+  if (hasInvalidInviteId) {
+    return jsonError('Invalid inviteUserIds payload.', 422);
+  }
+
+  const validInviteIds = inviteUserIds;
+
   const limit = await rateLimiter.check(`create-room:${sessionId}`, 5, 60_000);
   if (!limit.ok) {
     return jsonError('Rate limit exceeded for room creation.', 429);
@@ -66,7 +90,7 @@ export async function POST(request: Request): Promise<Response> {
     return jsonError(validationError, 422);
   }
 
-  const created = await chatStore.createChat(sessionId, normalizeName(rawName), inviteUserIds);
+  const created = await chatStore.createChat(sessionId, normalizeName(rawName), validInviteIds);
   if (!created) {
     return jsonError('Chat could not be created.', 403);
   }

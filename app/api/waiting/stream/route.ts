@@ -1,5 +1,5 @@
 import { CHAT_LIMITS } from '@/lib/config';
-import { jsonError } from '@/lib/http';
+import { isUuid, jsonError } from '@/lib/http';
 import { createSseResponse } from '@/lib/sse';
 import { chatStore } from '@/lib/store';
 
@@ -13,6 +13,10 @@ export async function GET(request: Request): Promise<Response> {
 
   if (!sessionId) {
     return jsonError('Missing sessionId.', 400);
+  }
+
+  if (!isUuid(sessionId)) {
+    return jsonError('Invalid sessionId.', 422);
   }
 
   const user = await chatStore.getUser(sessionId);
@@ -50,7 +54,7 @@ export async function GET(request: Request): Promise<Response> {
 
     const pollTimer = setInterval(() => {
       void pollStatus();
-    }, 1200);
+    }, CHAT_LIMITS.streamPollMs);
 
     return () => {
       closed = true;

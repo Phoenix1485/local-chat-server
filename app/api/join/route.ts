@@ -1,5 +1,5 @@
 import { CHAT_LIMITS } from '@/lib/config';
-import { getClientIp, jsonError } from '@/lib/http';
+import { enforceSameOrigin, getClientIp, jsonError } from '@/lib/http';
 import { rateLimiter } from '@/lib/rateLimiter';
 import { chatStore } from '@/lib/store';
 import { normalizeName, validateName } from '@/lib/validation';
@@ -8,6 +8,11 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request): Promise<Response> {
+  const sameOriginError = enforceSameOrigin(request);
+  if (sameOriginError) {
+    return sameOriginError;
+  }
+
   try {
     const ip = getClientIp(request);
     const limit = await rateLimiter.check(`join:${ip}`, 12, 60_000);

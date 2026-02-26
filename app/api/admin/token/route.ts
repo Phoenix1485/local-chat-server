@@ -1,6 +1,6 @@
 import { ADMIN_KEY } from '@/lib/config';
 import { isAdminTokenValid, issueAdminToken } from '@/lib/adminToken';
-import { jsonError } from '@/lib/http';
+import { enforceSameOrigin, jsonError } from '@/lib/http';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,6 +11,11 @@ type TokenRequestPayload = {
 };
 
 export async function POST(request: Request): Promise<Response> {
+  const sameOriginError = enforceSameOrigin(request);
+  if (sameOriginError) {
+    return sameOriginError;
+  }
+
   let payload: TokenRequestPayload;
   try {
     payload = await request.json();

@@ -1,4 +1,4 @@
-import { jsonError } from '@/lib/http';
+import { enforceSameOrigin, isUuid, jsonError } from '@/lib/http';
 import { rateLimiter } from '@/lib/rateLimiter';
 import { chatStore } from '@/lib/store';
 
@@ -12,6 +12,11 @@ type InvitePayload = {
 };
 
 export async function POST(request: Request): Promise<Response> {
+  const sameOriginError = enforceSameOrigin(request);
+  if (sameOriginError) {
+    return sameOriginError;
+  }
+
   let payload: InvitePayload;
 
   try {
@@ -34,6 +39,10 @@ export async function POST(request: Request): Promise<Response> {
 
   if (!targetUserId) {
     return jsonError('Missing targetUserId.', 400);
+  }
+
+  if (!isUuid(sessionId) || !isUuid(chatId) || !isUuid(targetUserId)) {
+    return jsonError('Invalid sessionId, chatId, or targetUserId.', 422);
   }
 
   const limit = await rateLimiter.check(`invite:${sessionId}`, 20, 60_000);

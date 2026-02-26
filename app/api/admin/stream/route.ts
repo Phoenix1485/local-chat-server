@@ -39,7 +39,7 @@ export async function GET(request: Request): Promise<Response> {
 
     const pollTimer = setInterval(() => {
       void pollSnapshot();
-    }, 1500);
+    }, CHAT_LIMITS.adminPollMs);
 
     return () => {
       closed = true;

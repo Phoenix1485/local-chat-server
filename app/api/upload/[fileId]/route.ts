@@ -1,4 +1,4 @@
-import { jsonError } from '@/lib/http';
+import { isUuid, jsonError } from '@/lib/http';
 import { chatStore } from '@/lib/store';
 
 export const runtime = 'nodejs';
@@ -18,6 +18,10 @@ export async function GET(
 
   if (!chatId) {
     return jsonError('Missing chatId.', 400);
+  }
+
+  if (!isUuid(sessionId) || !isUuid(chatId) || !isUuid(params.fileId)) {
+    return jsonError('Invalid sessionId, chatId, or fileId.', 422);
   }
 
   const user = await chatStore.getUser(sessionId);
@@ -49,7 +53,9 @@ export async function GET(
     headers: {
       'Content-Type': upload.mimeType,
       'Content-Length': String(upload.size),
-      'Content-Disposition': `inline; filename="${safeFileName}"`
+      'Content-Disposition': `inline; filename="${safeFileName}"`,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff'
     }
   });
 }
