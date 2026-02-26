@@ -5,22 +5,15 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AdminSnapshot } from '@/types/chat';
 import { StatusPill } from '@/components/StatusPill';
 
-const EMPTY_SNAPSHOT: AdminSnapshot = {
-  users: [],
-  pending: [],
-  approved: [],
-  rejected: [],
-  recentMessages: []
-};
-
 export default function AdminPage() {
   const [adminTokenInput, setAdminTokenInput] = useState('');
   const [activeToken, setActiveToken] = useState('');
-  const [snapshot, setSnapshot] = useState<AdminSnapshot>(EMPTY_SNAPSHOT);
+  const [snapshot, setSnapshot] = useState<AdminSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
 
-  const fetchSnapshot = useCallback(async (token: string) => {
+  const fetchSnapshot = useCallback(async (token: string): Promise<AdminSnapshot> => {
     const response = await fetch('/api/admin/state', {
       headers: {
         'x-admin-token': token
@@ -37,31 +30,60 @@ export default function AdminPage() {
     if (!response.ok) {
       const serverError =
         payload && typeof payload === 'object' && 'error' in payload ? String(payload.error) : null;
-      throw new Error(serverError ?? 'Admin-Status konnte nicht geladen werden.');
+      if (response.status === 401) {
+        throw new Error(
+          serverError ?? 'Unauthorized. Token ist ungueltig/abgelaufen oder Vercel ADMIN_KEY passt nicht.'
+        );
+      }
+      throw new Error(serverError ?? `Admin-Status konnte nicht geladen werden (${response.status}).`);
     }
 
     if (!payload || typeof payload !== 'object') {
       throw new Error('Admin-Statusantwort ungueltig.');
     }
 
-    setSnapshot(payload as AdminSnapshot);
-    setError(null);
+    return payload as AdminSnapshot;
   }, []);
 
   useEffect(() => {
     const stored = localStorage.getItem('chat_admin_token') ?? '';
-    setAdminTokenInput(stored);
-    setActiveToken(stored);
+    const normalized = stored.trim();
+    setAdminTokenInput(normalized);
+    setActiveToken(normalized);
   }, []);
 
   useEffect(() => {
     if (!activeToken) {
+      setSnapshot(null);
+      setError(null);
+      setIsConnecting(false);
       return;
     }
 
     let closed = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let stream: EventSource | null = null;
+
+    const applySnapshot = (next: AdminSnapshot) => {
+      setSnapshot(next);
+      setError(null);
+      setIsConnecting(false);
+    };
+
+    const loadSnapshot = async () => {
+      try {
+        const next = await fetchSnapshot(activeToken);
+        if (!closed) {
+          applySnapshot(next);
+        }
+      } catch (requestError) {
+        if (!closed) {
+          setSnapshot(null);
+          setError(requestError instanceof Error ? requestError.message : 'Admin-Status konnte nicht geladen werden.');
+          setIsConnecting(false);
+        }
+      }
+    };
 
     const openStream = () => {
       if (closed) {
@@ -74,8 +96,7 @@ export default function AdminPage() {
       stream.addEventListener('snapshot', (event) => {
         try {
           const payload = JSON.parse((event as MessageEvent).data) as AdminSnapshot;
-          setSnapshot(payload);
-          setError(null);
+          applySnapshot(payload);
         } catch {
           setError('Admin-Status konnte nicht verarbeitet werden.');
         }
@@ -96,15 +117,12 @@ export default function AdminPage() {
       };
     };
 
-    void fetchSnapshot(activeToken).catch((requestError) => {
-      setError(requestError instanceof Error ? requestError.message : 'Admin-Status konnte nicht geladen werden.');
-    });
+    setIsConnecting(true);
+    void loadSnapshot();
 
     openStream();
     const pollTimer = setInterval(() => {
-      void fetchSnapshot(activeToken).catch(() => {
-        // Stream reconnect handler already surfaces the error state.
-      });
+      void loadSnapshot();
     }, 2500);
 
     return () => {
@@ -117,7 +135,11 @@ export default function AdminPage() {
     };
   }, [activeToken, fetchSnapshot]);
 
-  const pendingCount = useMemo(() => snapshot.pending.length, [snapshot.pending.length]);
+  const pendingUsers = snapshot?.pending ?? [];
+  const approvedUsers = snapshot?.approved ?? [];
+  const rejectedUsers = snapshot?.rejected ?? [];
+  const recentMessages = snapshot?.recentMessages ?? [];
+  const pendingCount = useMemo(() => pendingUsers.length, [pendingUsers.length]);
 
   const applyDecision = async (sessionId: string, action: 'approve' | 'reject' | 'kick') => {
     if (!activeToken) {
@@ -149,7 +171,8 @@ export default function AdminPage() {
         throw new Error(serverError ?? 'Aktion fehlgeschlagen.');
       }
 
-      await fetchSnapshot(activeToken);
+      const next = await fetchSnapshot(activeToken);
+      setSnapshot(next);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Aktion fehlgeschlagen.');
     } finally {
@@ -177,6 +200,8 @@ export default function AdminPage() {
               const token = adminTokenInput.trim();
               localStorage.setItem('chat_admin_token', token);
               setActiveToken(token);
+              setSnapshot(null);
+              setError(null);
             }}
           >
             Verbinden
@@ -188,8 +213,9 @@ export default function AdminPage() {
               localStorage.removeItem('chat_admin_token');
               setAdminTokenInput('');
               setActiveToken('');
-              setSnapshot(EMPTY_SNAPSHOT);
+              setSnapshot(null);
               setError(null);
+              setIsConnecting(false);
             }}
           >
             Trennen
@@ -203,14 +229,22 @@ export default function AdminPage() {
           .
         </p>
 
+        {!activeToken ? (
+          <p className="mt-3 rounded-md bg-slate-800/80 px-3 py-2 text-sm text-slate-200">
+            Nicht verbunden. Gib ein Admin-Token ein und klicke auf Verbinden.
+          </p>
+        ) : null}
+        {isConnecting ? (
+          <p className="mt-3 rounded-md bg-slate-800/80 px-3 py-2 text-sm text-slate-200">Verbinde und lade Live-Daten...</p>
+        ) : null}
         {error ? <p className="mt-3 rounded-md bg-rose-900/30 px-3 py-2 text-sm text-rose-200">{error}</p> : null}
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2">
+      {snapshot ? <section className="grid gap-4 md:grid-cols-2">
         <div className="rounded-2xl border border-slate-700/80 bg-panel/70 p-4">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Wartend ({pendingCount})</h2>
           <ul className="mt-3 space-y-2">
-            {snapshot.pending.map((user) => (
+            {pendingUsers.map((user) => (
               <li key={user.id} className="rounded-lg border border-slate-700/70 bg-slate-900/65 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div>
@@ -239,14 +273,14 @@ export default function AdminPage() {
                 </div>
               </li>
             ))}
-            {snapshot.pending.length === 0 ? <li className="text-sm text-slate-400">Keine wartenden Nutzer.</li> : null}
+            {pendingUsers.length === 0 ? <li className="text-sm text-slate-400">Keine wartenden Nutzer.</li> : null}
           </ul>
         </div>
 
         <div className="rounded-2xl border border-slate-700/80 bg-panel/70 p-4">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Freigegeben ({snapshot.approved.length})</h2>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Freigegeben ({approvedUsers.length})</h2>
           <ul className="mt-3 space-y-2">
-            {snapshot.approved.map((user) => (
+            {approvedUsers.map((user) => (
               <li key={user.id} className="rounded-lg border border-slate-700/70 bg-slate-900/65 p-3 text-sm text-slate-100">
                 <div className="flex items-center justify-between gap-2">
                   <span>{user.name}</span>
@@ -264,12 +298,12 @@ export default function AdminPage() {
                 </div>
               </li>
             ))}
-            {snapshot.approved.length === 0 ? <li className="text-sm text-slate-400">Noch keine freigegebenen Nutzer.</li> : null}
+            {approvedUsers.length === 0 ? <li className="text-sm text-slate-400">Noch keine freigegebenen Nutzer.</li> : null}
           </ul>
 
-          <h2 className="mt-5 text-sm font-semibold uppercase tracking-wide text-slate-300">Abgelehnt ({snapshot.rejected.length})</h2>
+          <h2 className="mt-5 text-sm font-semibold uppercase tracking-wide text-slate-300">Abgelehnt ({rejectedUsers.length})</h2>
           <ul className="mt-3 space-y-2">
-            {snapshot.rejected.map((user) => (
+            {rejectedUsers.map((user) => (
               <li key={user.id} className="rounded-lg border border-slate-700/70 bg-slate-900/65 p-3 text-sm text-slate-100">
                 <div className="flex items-center justify-between gap-2">
                   <span>{user.name}</span>
@@ -277,23 +311,23 @@ export default function AdminPage() {
                 </div>
               </li>
             ))}
-            {snapshot.rejected.length === 0 ? <li className="text-sm text-slate-400">Keine abgelehnten Nutzer.</li> : null}
+            {rejectedUsers.length === 0 ? <li className="text-sm text-slate-400">Keine abgelehnten Nutzer.</li> : null}
           </ul>
         </div>
-      </section>
+      </section> : null}
 
-      <section className="rounded-2xl border border-slate-700/80 bg-panel/70 p-4">
+      {snapshot ? <section className="rounded-2xl border border-slate-700/80 bg-panel/70 p-4">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Letzte Nachrichten</h2>
         <ul className="mt-3 space-y-2">
-          {snapshot.recentMessages.map((message) => (
+          {recentMessages.map((message) => (
             <li key={message.id} className="rounded-lg border border-slate-700/70 bg-slate-900/65 p-3">
               <p className="text-xs text-slate-400">{new Date(message.createdAt).toLocaleTimeString()} - {message.userName}</p>
               <p className="mt-1 text-sm text-slate-100">{message.text}</p>
             </li>
           ))}
-          {snapshot.recentMessages.length === 0 ? <li className="text-sm text-slate-400">Noch keine Nachrichten.</li> : null}
+          {recentMessages.length === 0 ? <li className="text-sm text-slate-400">Noch keine Nachrichten.</li> : null}
         </ul>
-      </section>
+      </section> : null}
     </main>
   );
 }
