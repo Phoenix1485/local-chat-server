@@ -182,20 +182,20 @@ export default function AdminPage() {
 
   return (
     <main className="space-y-4">
-      <section className="rounded-2xl border border-slate-700/80 bg-panel/70 p-4">
+      <section className="glass-panel rounded-2xl p-4">
         <h1 className="text-xl font-semibold">Admin-Panel</h1>
-        <p className="mt-1 text-sm text-slate-300">Mit Admin-Token verbinden, um Warteschlange und Entscheidungen live zu verwalten.</p>
+        <p className="surface-muted mt-1 text-sm">Mit Admin-Token verbinden, um Warteschlange und Entscheidungen live zu verwalten.</p>
 
         <div className="mt-4 flex flex-col gap-2 sm:flex-row">
           <input
             value={adminTokenInput}
             onChange={(event) => setAdminTokenInput(event.target.value)}
-            className="flex-1 rounded-md border border-slate-600 bg-slate-900/80 px-3 py-2 text-sm outline-none ring-accent/70 focus:ring-2"
+            className="glass-input flex-1 text-sm"
             placeholder="Admin-Token"
           />
           <button
             type="button"
-            className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-cyan-300"
+            className="btn-primary text-sm"
             onClick={() => {
               const token = adminTokenInput.trim();
               localStorage.setItem('chat_admin_token', token);
@@ -208,7 +208,7 @@ export default function AdminPage() {
           </button>
           <button
             type="button"
-            className="rounded-md border border-slate-500 px-4 py-2 text-sm hover:bg-slate-800"
+            className="btn-soft"
             onClick={() => {
               localStorage.removeItem('chat_admin_token');
               setAdminTokenInput('');
@@ -221,7 +221,7 @@ export default function AdminPage() {
             Trennen
           </button>
         </div>
-        <p className="mt-3 text-xs text-slate-400">
+        <p className="surface-muted mt-3 text-xs">
           Neues Token noetig? Zu{' '}
           <Link href="/admin/token" className="text-cyan-300 underline hover:text-cyan-200">
             /admin/token
@@ -230,22 +230,22 @@ export default function AdminPage() {
         </p>
 
         {!activeToken ? (
-          <p className="mt-3 rounded-md bg-slate-800/80 px-3 py-2 text-sm text-slate-200">
+          <p className="alert-info mt-3 rounded-md px-3 py-2 text-sm">
             Nicht verbunden. Gib ein Admin-Token ein und klicke auf Verbinden.
           </p>
         ) : null}
         {isConnecting ? (
-          <p className="mt-3 rounded-md bg-slate-800/80 px-3 py-2 text-sm text-slate-200">Verbinde und lade Live-Daten...</p>
+          <p className="alert-info mt-3 rounded-md px-3 py-2 text-sm">Verbinde und lade Live-Daten...</p>
         ) : null}
-        {error ? <p className="mt-3 rounded-md bg-rose-900/30 px-3 py-2 text-sm text-rose-200">{error}</p> : null}
+        {error ? <p className="alert-error mt-3 rounded-md px-3 py-2 text-sm">{error}</p> : null}
       </section>
 
       {snapshot ? <section className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-2xl border border-slate-700/80 bg-panel/70 p-4">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Wartend ({pendingCount})</h2>
+        <div className="glass-panel rounded-2xl p-4">
+          <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">Wartend ({pendingCount})</h2>
           <ul className="mt-3 space-y-2">
             {pendingUsers.map((user) => (
-              <li key={user.id} className="rounded-lg border border-slate-700/70 bg-slate-900/65 p-3">
+              <li key={user.id} className="glass-card rounded-lg p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <p className="text-sm font-semibold text-slate-100">{user.name}</p>
@@ -273,15 +273,15 @@ export default function AdminPage() {
                 </div>
               </li>
             ))}
-            {pendingUsers.length === 0 ? <li className="text-sm text-slate-400">Keine wartenden Nutzer.</li> : null}
+            {pendingUsers.length === 0 ? <li className="surface-muted text-sm">Keine wartenden Nutzer.</li> : null}
           </ul>
         </div>
 
-        <div className="rounded-2xl border border-slate-700/80 bg-panel/70 p-4">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Freigegeben ({approvedUsers.length})</h2>
+        <div className="glass-panel rounded-2xl p-4">
+          <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">Freigegeben ({approvedUsers.length})</h2>
           <ul className="mt-3 space-y-2">
             {approvedUsers.map((user) => (
-              <li key={user.id} className="rounded-lg border border-slate-700/70 bg-slate-900/65 p-3 text-sm text-slate-100">
+              <li key={user.id} className="glass-card rounded-lg p-3 text-sm text-slate-100">
                 <div className="flex items-center justify-between gap-2">
                   <span>{user.name}</span>
                   <StatusPill status={user.status} />
@@ -298,34 +298,34 @@ export default function AdminPage() {
                 </div>
               </li>
             ))}
-            {approvedUsers.length === 0 ? <li className="text-sm text-slate-400">Noch keine freigegebenen Nutzer.</li> : null}
+            {approvedUsers.length === 0 ? <li className="surface-muted text-sm">Noch keine freigegebenen Nutzer.</li> : null}
           </ul>
 
-          <h2 className="mt-5 text-sm font-semibold uppercase tracking-wide text-slate-300">Abgelehnt ({rejectedUsers.length})</h2>
+          <h2 className="surface-muted mt-5 text-sm font-semibold uppercase tracking-wide">Abgelehnt ({rejectedUsers.length})</h2>
           <ul className="mt-3 space-y-2">
             {rejectedUsers.map((user) => (
-              <li key={user.id} className="rounded-lg border border-slate-700/70 bg-slate-900/65 p-3 text-sm text-slate-100">
+              <li key={user.id} className="glass-card rounded-lg p-3 text-sm text-slate-100">
                 <div className="flex items-center justify-between gap-2">
                   <span>{user.name}</span>
                   <StatusPill status={user.status} />
                 </div>
               </li>
             ))}
-            {rejectedUsers.length === 0 ? <li className="text-sm text-slate-400">Keine abgelehnten Nutzer.</li> : null}
+            {rejectedUsers.length === 0 ? <li className="surface-muted text-sm">Keine abgelehnten Nutzer.</li> : null}
           </ul>
         </div>
       </section> : null}
 
-      {snapshot ? <section className="rounded-2xl border border-slate-700/80 bg-panel/70 p-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Letzte Nachrichten</h2>
+      {snapshot ? <section className="glass-panel rounded-2xl p-4">
+        <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">Letzte Nachrichten</h2>
         <ul className="mt-3 space-y-2">
           {recentMessages.map((message) => (
-            <li key={message.id} className="rounded-lg border border-slate-700/70 bg-slate-900/65 p-3">
+            <li key={message.id} className="glass-card rounded-lg p-3">
               <p className="text-xs text-slate-400">{new Date(message.createdAt).toLocaleTimeString()} - {message.userName}</p>
               <p className="mt-1 text-sm text-slate-100">{message.text}</p>
             </li>
           ))}
-          {recentMessages.length === 0 ? <li className="text-sm text-slate-400">Noch keine Nachrichten.</li> : null}
+          {recentMessages.length === 0 ? <li className="surface-muted text-sm">Noch keine Nachrichten.</li> : null}
         </ul>
       </section> : null}
     </main>

@@ -11,18 +11,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="de">
       <body className="mx-auto min-h-screen max-w-5xl px-4 py-8 text-slate-100 sm:px-6">
-        <header className="mb-8 flex items-center justify-between rounded-xl border border-slate-700/70 bg-panel/70 px-4 py-3 backdrop-blur">
-          <Link href="/" className="text-lg font-semibold tracking-wide text-accent">
+        <header className="glass-panel mb-8 flex items-center justify-between rounded-xl px-4 py-3">
+          <Link href="/" className="text-lg font-semibold tracking-wide text-cyan-200">
             LocalChat
           </Link>
           <nav className="flex gap-3 text-sm">
-            <Link className="rounded-md bg-slate-800/80 px-3 py-1.5 hover:bg-slate-700" href="/">
+            <Link className="nav-link" href="/">
               Beitreten
             </Link>
-            <Link className="rounded-md bg-slate-800/80 px-3 py-1.5 hover:bg-slate-700" href="/admin">
+            <Link className="nav-link" href="/admin">
               Admin
             </Link>
-            <Link className="rounded-md bg-slate-800/80 px-3 py-1.5 hover:bg-slate-700" href="/admin/token">
+            <Link className="nav-link" href="/admin/token">
               Admin-Token
             </Link>
           </nav>

@@ -65,9 +65,9 @@ export default function JoinPage() {
 
   return (
     <main className="mx-auto max-w-xl">
-      <section className="rounded-2xl border border-slate-700/80 bg-panel/70 p-6 shadow-xl backdrop-blur">
+      <section className="glass-panel rounded-2xl p-6">
         <h1 className="text-2xl font-semibold text-slate-100">Echtzeit-Chat Demo</h1>
-        <p className="mt-2 text-sm text-slate-300">
+        <p className="surface-muted mt-2 text-sm">
           Gib deinen Namen ein, um der Freigabe-Warteschlange beizutreten. Ein Admin muss deinen Zugriff freigeben, bevor der Chat nutzbar ist.
         </p>
 
@@ -79,17 +79,17 @@ export default function JoinPage() {
               onChange={(event) => setName(event.target.value)}
               maxLength={24}
               required
-              className="w-full rounded-md border border-slate-600 bg-slate-900/80 px-3 py-2 text-slate-100 outline-none ring-accent/60 transition focus:ring-2"
+              className="glass-input"
               placeholder="z. B. Lena"
             />
           </label>
 
-          {error ? <p className="rounded-md bg-rose-900/30 px-3 py-2 text-sm text-rose-200">{error}</p> : null}
+          {error ? <p className="alert-error rounded-md px-3 py-2 text-sm">{error}</p> : null}
 
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full rounded-md bg-accent px-4 py-2 font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+            className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isLoading ? 'Wird gesendet...' : 'Freigabe anfragen'}
           </button>
@@ -102,7 +102,7 @@ export default function JoinPage() {
                 setName(savedName);
                 void requestAccess(savedName);
               }}
-              className="w-full rounded-md border border-slate-500 px-4 py-2 font-semibold text-slate-100 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              className="btn-soft w-full font-semibold disabled:cursor-not-allowed disabled:opacity-60"
             >
               Mit gespeichertem Namen anfragen ({savedName})
             </button>

@@ -132,17 +132,17 @@ function WaitingPageContent() {
 
   return (
     <main className="mx-auto max-w-xl">
-      <section className="rounded-2xl border border-slate-700/80 bg-panel/70 p-6 shadow-xl">
+      <section className="glass-panel rounded-2xl p-6">
         <h1 className="text-2xl font-semibold">Warteraum</h1>
-        <p className="mt-2 text-sm text-slate-300">Deine Anfrage ist in der Admin-Warteschlange. Diese Seite aktualisiert sich automatisch.</p>
+        <p className="surface-muted mt-2 text-sm">Deine Anfrage ist in der Admin-Warteschlange. Diese Seite aktualisiert sich automatisch.</p>
 
-        <div className="mt-6 rounded-xl border border-slate-700/70 bg-slate-900/70 p-4">
-          <p className="text-sm text-slate-300">Aktueller Status</p>
+        <div className="glass-inset mt-6 rounded-xl p-4">
+          <p className="surface-muted text-sm">Aktueller Status</p>
           <div className="mt-2">
             <StatusPill status={status} />
           </div>
 
-          {status === 'pending' ? <p className="mt-3 text-sm text-slate-300">Bitte halte diesen Tab geoeffnet.</p> : null}
+          {status === 'pending' ? <p className="surface-muted mt-3 text-sm">Bitte halte diesen Tab geoeffnet.</p> : null}
           {status === 'approved' ? <p className="mt-3 text-sm text-emerald-300">Freigegeben. Weiterleitung zum Chat...</p> : null}
           {status === 'rejected' ? <p className="mt-3 text-sm text-rose-300">Deine Anfrage wurde vom Admin abgelehnt.</p> : null}
           {error ? <p className="mt-3 text-sm text-rose-300">{error}</p> : null}
@@ -151,7 +151,7 @@ function WaitingPageContent() {
         <button
           type="button"
           onClick={() => router.push('/')}
-          className="mt-6 rounded-md border border-slate-500 px-4 py-2 text-sm hover:bg-slate-800"
+          className="btn-soft mt-6"
         >
           Zurueck zur Anfrage
         </button>
@@ -165,8 +165,8 @@ export default function WaitingPage() {
     <Suspense
       fallback={
         <main className="mx-auto max-w-xl">
-          <section className="rounded-2xl border border-slate-700/80 bg-panel/70 p-6 shadow-xl">
-            <p className="text-sm text-slate-300">Warteraum wird geladen...</p>
+          <section className="glass-panel rounded-2xl p-6">
+            <p className="surface-muted text-sm">Warteraum wird geladen...</p>
           </section>
         </main>
       }

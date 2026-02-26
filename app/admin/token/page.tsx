@@ -9,8 +9,8 @@ export default function AdminTokenPage() {
     <Suspense
       fallback={
         <main className="mx-auto max-w-2xl space-y-4">
-          <section className="rounded-2xl border border-slate-700/80 bg-panel/70 p-5">
-            <p className="text-sm text-slate-300">Token-Seite wird geladen...</p>
+          <section className="glass-panel rounded-2xl p-5">
+            <p className="surface-muted text-sm">Token-Seite wird geladen...</p>
           </section>
         </main>
       }

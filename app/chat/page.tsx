@@ -152,17 +152,17 @@ function ChatPageContent() {
 
   return (
     <main className="grid gap-4 md:grid-cols-[1fr_240px]">
-      <section className="flex min-h-[65vh] flex-col rounded-2xl border border-slate-700/80 bg-panel/70 p-4">
+      <section className="glass-panel flex min-h-[65vh] flex-col rounded-2xl p-4">
         <div className="mb-3 flex items-center justify-between border-b border-slate-700/70 pb-2">
           <h1 className="text-xl font-semibold">Chatraum</h1>
-          <span className="text-xs uppercase tracking-wide text-slate-300">
+          <span className="surface-muted text-xs uppercase tracking-wide">
             {connectionState === 'live' ? statusLabels[sessionStatus] : connectionState === 'connecting' ? 'Verbinden...' : 'Getrennt'}
           </span>
         </div>
 
         <div className="flex-1 space-y-3 overflow-y-auto pr-1">
           {messages.map((message) => (
-            <article key={message.id} className="rounded-lg border border-slate-700/70 bg-slate-900/65 px-3 py-2">
+            <article key={message.id} className="glass-card rounded-lg px-3 py-2">
               <header className="mb-1 flex items-center justify-between gap-2">
                 <span className="text-sm font-semibold text-accent">{message.userName}</span>
                 <time className="text-xs text-slate-400">{formatTime(message.createdAt)}</time>
@@ -195,30 +195,30 @@ function ChatPageContent() {
             onChange={(event) => setText(event.target.value)}
             maxLength={1000}
             placeholder="Nachricht schreiben"
-            className="flex-1 rounded-md border border-slate-600 bg-slate-900/80 px-3 py-2 text-sm outline-none ring-accent/70 focus:ring-2"
+            className="glass-input flex-1 text-sm"
           />
           <button
             type="submit"
             disabled={isSending || !text.trim()}
-            className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+            className="btn-primary text-sm disabled:cursor-not-allowed disabled:opacity-60"
           >
             Senden
           </button>
         </form>
 
-        {error ? <p className="mt-3 rounded-md bg-rose-900/30 px-3 py-2 text-sm text-rose-200">{error}</p> : null}
+        {error ? <p className="alert-error mt-3 rounded-md px-3 py-2 text-sm">{error}</p> : null}
       </section>
 
-      <aside className="space-y-3 rounded-2xl border border-slate-700/80 bg-panel/70 p-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Aktionen</h2>
+      <aside className="glass-panel space-y-3 rounded-2xl p-4">
+        <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">Aktionen</h2>
 
         <label className="block space-y-2 text-sm">
-          <span className="text-slate-300">Datei hochladen (max. 2 MB)</span>
+          <span className="surface-muted">Datei hochladen (max. 2 MB)</span>
           <input
             type="file"
             onChange={uploadFile}
             disabled={isUploading}
-            className="w-full rounded-md border border-slate-600 bg-slate-900/80 p-2 text-xs file:mr-2 file:rounded file:border-0 file:bg-slate-700 file:px-2 file:py-1 file:text-slate-100"
+            className="file-input"
           />
         </label>
 
@@ -228,7 +228,7 @@ function ChatPageContent() {
             localStorage.removeItem('chat_session_id');
             router.push('/');
           }}
-          className="w-full rounded-md border border-slate-500 px-3 py-2 text-sm hover:bg-slate-800"
+          className="btn-soft w-full"
         >
           Chat verlassen
         </button>
@@ -242,8 +242,8 @@ export default function ChatPage() {
     <Suspense
       fallback={
         <main className="mx-auto max-w-xl">
-          <section className="rounded-2xl border border-slate-700/80 bg-panel/70 p-6 shadow-xl">
-            <p className="text-sm text-slate-300">Chat wird geladen...</p>
+          <section className="glass-panel rounded-2xl p-6">
+            <p className="surface-muted text-sm">Chat wird geladen...</p>
           </section>
         </main>
       }

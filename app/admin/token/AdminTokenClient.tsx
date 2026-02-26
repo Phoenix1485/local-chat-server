@@ -60,30 +60,30 @@ export default function AdminTokenClient() {
 
   return (
     <main className="mx-auto max-w-2xl space-y-4">
-      <section className="rounded-2xl border border-slate-700/80 bg-panel/70 p-5">
+      <section className="glass-panel rounded-2xl p-5">
         <h1 className="text-xl font-semibold">Admin-Token</h1>
-        <p className="mt-2 text-sm text-slate-300">
+        <p className="surface-muted mt-2 text-sm">
           Admin-Token erzeugen oder erneuern und danach im Admin-Panel verwenden.
         </p>
 
         <div className="mt-5 space-y-3">
           <label className="block space-y-1">
-            <span className="text-sm text-slate-300">Admin-Key (fuer das erste Token)</span>
+            <span className="surface-muted text-sm">Admin-Key (fuer das erste Token)</span>
             <input
               value={adminKey}
               onChange={(event) => setAdminKey(event.target.value)}
-              className="w-full rounded-md border border-slate-600 bg-slate-900/80 px-3 py-2 text-sm outline-none ring-accent/70 focus:ring-2"
+              className="glass-input text-sm"
               placeholder="ADMIN_KEY"
             />
           </label>
 
           <label className="block space-y-1">
-            <span className="text-sm text-slate-300">Aktuelles Token (optional zur Erneuerung)</span>
+            <span className="surface-muted text-sm">Aktuelles Token (optional zur Erneuerung)</span>
             <textarea
               value={currentToken}
               onChange={(event) => setCurrentToken(event.target.value)}
               rows={4}
-              className="w-full rounded-md border border-slate-600 bg-slate-900/80 px-3 py-2 text-xs outline-none ring-accent/70 focus:ring-2"
+              className="glass-input text-xs"
               placeholder="Vorhandenes Token einfuegen"
             />
           </label>
@@ -94,11 +94,11 @@ export default function AdminTokenClient() {
             type="button"
             onClick={requestNewToken}
             disabled={isLoading}
-            className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+            className="btn-primary text-sm disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isLoading ? 'Wird erneuert...' : 'Token erneuern'}
           </button>
-          <Link href="/admin" className="rounded-md border border-slate-500 px-4 py-2 text-sm hover:bg-slate-800">
+          <Link href="/admin" className="btn-soft">
             Zum Admin-Panel
           </Link>
         </div>
@@ -106,16 +106,16 @@ export default function AdminTokenClient() {
         {expiresAt ? (
           <p className="mt-3 text-xs text-emerald-300">Token gueltig bis: {new Date(expiresAt).toLocaleString()}</p>
         ) : null}
-        {error ? <p className="mt-3 rounded-md bg-rose-900/30 px-3 py-2 text-sm text-rose-200">{error}</p> : null}
+        {error ? <p className="alert-error mt-3 rounded-md px-3 py-2 text-sm">{error}</p> : null}
       </section>
 
-      <section className="rounded-2xl border border-slate-700/80 bg-panel/70 p-5">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Aktuelles Token</h2>
+      <section className="glass-panel rounded-2xl p-5">
+        <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">Aktuelles Token</h2>
         <textarea
           readOnly
           value={latestToken}
           rows={5}
-          className="mt-3 w-full rounded-md border border-slate-600 bg-slate-950/80 px-3 py-2 text-xs text-slate-100"
+          className="glass-input mt-3 text-xs"
         />
       </section>
     </main>
