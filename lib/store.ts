@@ -1,153 +1,123 @@
 import { randomUUID } from 'node:crypto';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { CHAT_LIMITS } from '@/lib/config';
-import { getRedisClient } from '@/lib/redis';
+import { ensureMysqlSchema, getMysqlPool } from '@/lib/mysql';
 import type { AdminSnapshot, ChatAttachment, ChatMessage, StoredUpload, UserSession, UserStatus } from '@/types/chat';
 
-const KEYS = {
-  users: 'chat:users',
-  messages: 'chat:messages',
-  uploadsMeta: 'chat:uploads:meta'
-} as const;
-
-type UploadMeta = {
+type UserRow = RowDataPacket & {
   id: string;
-  fileName: string;
-  mimeType: string;
+  name: string;
+  status: UserStatus;
+  created_at: number;
+  updated_at: number;
+  ip: string;
+};
+
+type MessageRow = RowDataPacket & {
+  id: string;
+  user_id: string;
+  user_name: string;
+  text: string;
+  created_at: number;
+  attachments_json: string | null;
+};
+
+type UploadRow = RowDataPacket & {
+  id: string;
+  file_name: string;
+  mime_type: string;
   size: number;
-  uploadedBy: string;
-  uploadedAt: number;
+  uploaded_by: string;
+  uploaded_at: number;
+  buffer: Buffer;
 };
 
-type UploadRecord = UploadMeta & {
-  bufferBase64: string;
+type UploadMetaRow = RowDataPacket & {
+  id: string;
+  file_name: string;
+  mime_type: string;
+  size: number;
+  uploaded_by: string;
+  uploaded_at: number;
 };
 
-function uploadKey(fileId: string): string {
-  return `chat:upload:${fileId}`;
-}
+type CountRow = RowDataPacket & {
+  total: number;
+};
 
-function parseJson<T>(value: unknown): T | null {
-  if (value == null) {
+type IdRow = RowDataPacket & {
+  id: string;
+};
+
+function parseJson<T>(value: string | null): T | null {
+  if (!value) {
     return null;
   }
 
-  if (typeof value === 'string') {
-    try {
-      return JSON.parse(value) as T;
-    } catch {
-      return null;
-    }
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
   }
-
-  if (typeof value === 'object') {
-    return value as T;
-  }
-
-  return null;
 }
 
-function parseHashValues(hash: unknown): unknown[] {
-  if (!hash || typeof hash !== 'object') {
-    return [];
+function asNumber(value: unknown, fallback = 0): number {
+  if (typeof value === 'number') {
+    return value;
   }
 
-  if (Array.isArray(hash)) {
-    if (hash.length === 0) {
-      return [];
-    }
-
-    // Some Redis REST providers return HGETALL as [[field, value], ...]
-    if (Array.isArray(hash[0])) {
-      return hash
-        .map((entry) => (Array.isArray(entry) && entry.length >= 2 ? entry[1] : null))
-        .filter((value): value is unknown => value !== null);
-    }
-
-    // Some providers return [{ field, value }, ...] or [{ key, value }, ...]
-    if (
-      typeof hash[0] === 'object' &&
-      hash[0] !== null &&
-      ('value' in (hash[0] as Record<string, unknown>) || 'Value' in (hash[0] as Record<string, unknown>))
-    ) {
-      const values = hash
-        .map((entry) => {
-          if (!entry || typeof entry !== 'object') {
-            return null;
-          }
-
-          const record = entry as Record<string, unknown>;
-          if ('value' in record) {
-            return record.value ?? null;
-          }
-
-          if ('Value' in record) {
-            return record.Value ?? null;
-          }
-
-          return null;
-        })
-        .filter((value) => value !== null);
-
-      return values as unknown[];
-    }
-
-    // Upstash REST default format: [field, value, field, value, ...]
-    const values: unknown[] = [];
-    for (let i = 0; i < hash.length; i += 2) {
-      const maybeValue = hash[i + 1];
-      if (maybeValue !== undefined) {
-        values.push(maybeValue);
-      }
-    }
-    return values;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
   }
 
-  return Object.values(hash as Record<string, unknown>);
+  return fallback;
+}
+
+function mapUser(row: UserRow): UserSession {
+  return {
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    createdAt: asNumber(row.created_at),
+    updatedAt: asNumber(row.updated_at),
+    ip: row.ip
+  };
+}
+
+function mapMessage(row: MessageRow): ChatMessage {
+  const attachments = parseJson<ChatAttachment[]>(row.attachments_json);
+
+  return {
+    id: row.id,
+    userId: row.user_id,
+    userName: row.user_name,
+    text: row.text,
+    createdAt: asNumber(row.created_at),
+    attachments: Array.isArray(attachments) && attachments.length > 0 ? attachments : undefined
+  };
 }
 
 class ChatStore {
-  private async readHashValues(key: string): Promise<unknown[]> {
-    const redis = getRedisClient();
-
-    // Read all hash fields explicitly to ensure we always get complete values from Redis.
-    try {
-      const fields = await redis.hkeys<unknown>(key);
-      if (Array.isArray(fields) && fields.length > 0) {
-        const rawValues = await Promise.all(
-          fields
-            .filter((field): field is string => typeof field === 'string' && field.length > 0)
-            .map((field) => redis.hget<unknown>(key, field))
-        );
-
-        return rawValues.filter((value): value is unknown => value != null);
-      }
-    } catch {
-      // Fall back to command variants below.
-    }
-
-    // Prefer HVALS to avoid provider-specific HGETALL result layouts.
-    try {
-      const rawValues = await redis.hvals<unknown[]>(key);
-      if (Array.isArray(rawValues)) {
-        return rawValues;
-      }
-    } catch {
-      // Fall back to HGETALL parsing below.
-    }
-
-    const rawHash = await redis.hgetall<unknown>(key);
-    return parseHashValues(rawHash);
+  private async ensureReady(): Promise<void> {
+    await ensureMysqlSchema();
   }
 
   async listUsers(): Promise<UserSession[]> {
-    const values = await this.readHashValues(KEYS.users);
-    return values
-      .map((raw) => parseJson<UserSession>(raw))
-      .filter((user): user is UserSession => !!user)
-      .sort((a, b) => a.createdAt - b.createdAt);
+    await this.ensureReady();
+    const pool = getMysqlPool();
+
+    const [rows] = await pool.query<UserRow[]>(
+      'SELECT id, name, status, created_at, updated_at, ip FROM users ORDER BY created_at ASC'
+    );
+
+    return rows.map(mapUser);
   }
 
   async createUser(name: string, ip: string): Promise<UserSession> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+
     const now = Date.now();
     const user: UserSession = {
       id: randomUUID(),
@@ -158,49 +128,66 @@ class ChatStore {
       ip
     };
 
-    const redis = getRedisClient();
-    await redis.hset(KEYS.users, { [user.id]: JSON.stringify(user) });
+    await pool.query<ResultSetHeader>(
+      'INSERT INTO users (id, name, status, created_at, updated_at, ip) VALUES (?, ?, ?, ?, ?, ?)',
+      [user.id, user.name, user.status, user.createdAt, user.updatedAt, user.ip]
+    );
 
     return user;
   }
 
   async getUser(userId: string): Promise<UserSession | null> {
-    const redis = getRedisClient();
-    const raw = await redis.hget<string>(KEYS.users, userId);
-    const direct = parseJson<UserSession>(raw);
-    if (direct) {
-      return direct;
-    }
+    await this.ensureReady();
+    const pool = getMysqlPool();
 
-    // Fallback for providers/setups where field lookup can miss while hash scan still works.
-    const users = await this.listUsers();
-    return users.find((user) => user.id === userId) ?? null;
+    const [rows] = await pool.query<UserRow[]>(
+      'SELECT id, name, status, created_at, updated_at, ip FROM users WHERE id = ? LIMIT 1',
+      [userId]
+    );
+
+    const row = rows[0];
+    return row ? mapUser(row) : null;
   }
 
   async setUserStatus(userId: string, status: UserStatus, currentUser?: UserSession): Promise<UserSession | null> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+
     const user = currentUser ?? (await this.getUser(userId));
     if (!user) {
       return null;
     }
 
-    user.status = status;
-    user.updatedAt = Date.now();
+    const updatedAt = Date.now();
 
-    const redis = getRedisClient();
-    await redis.hset(KEYS.users, { [userId]: JSON.stringify(user) });
+    await pool.query<ResultSetHeader>(
+      'UPDATE users SET status = ?, updated_at = ? WHERE id = ?',
+      [status, updatedAt, userId]
+    );
 
-    return user;
+    return {
+      ...user,
+      status,
+      updatedAt
+    };
   }
 
   async listUsersByStatus(status: UserStatus): Promise<UserSession[]> {
-    const values = await this.readHashValues(KEYS.users);
-    return values
-      .map((raw) => parseJson<UserSession>(raw))
-      .filter((user): user is UserSession => !!user && user.status === status)
-      .sort((a, b) => a.createdAt - b.createdAt);
+    await this.ensureReady();
+    const pool = getMysqlPool();
+
+    const [rows] = await pool.query<UserRow[]>(
+      'SELECT id, name, status, created_at, updated_at, ip FROM users WHERE status = ? ORDER BY created_at ASC',
+      [status]
+    );
+
+    return rows.map(mapUser);
   }
 
   async addMessage(userId: string, text: string, attachments?: ChatAttachment[]): Promise<ChatMessage | null> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+
     const user = await this.getUser(userId);
     if (!user || user.status !== 'approved') {
       return null;
@@ -215,28 +202,50 @@ class ChatStore {
       attachments: attachments && attachments.length > 0 ? attachments : undefined
     };
 
-    const redis = getRedisClient();
-    await redis.rpush(KEYS.messages, JSON.stringify(message));
-    await redis.ltrim(KEYS.messages, -CHAT_LIMITS.maxMessagesInMemory, -1);
+    await pool.query<ResultSetHeader>(
+      'INSERT INTO messages (id, user_id, user_name, text, created_at, attachments_json) VALUES (?, ?, ?, ?, ?, ?)',
+      [
+        message.id,
+        message.userId,
+        message.userName,
+        message.text,
+        message.createdAt,
+        message.attachments ? JSON.stringify(message.attachments) : null
+      ]
+    );
+
+    await this.enforceMessageLimit();
 
     return message;
   }
 
   async getRecentMessages(limit = 80): Promise<ChatMessage[]> {
-    const redis = getRedisClient();
-    const rawMessages = await redis.lrange<string[]>(KEYS.messages, -limit, -1);
+    await this.ensureReady();
+    const pool = getMysqlPool();
 
-    if (!Array.isArray(rawMessages)) {
-      return [];
-    }
+    const safeLimit = Math.max(1, Math.floor(limit));
 
-    return rawMessages
-      .map((raw) => parseJson<ChatMessage>(raw))
-      .filter((message): message is ChatMessage => !!message)
-      .sort((a, b) => a.createdAt - b.createdAt);
+    const [rows] = await pool.query<MessageRow[]>(
+      `
+      SELECT id, user_id, user_name, text, created_at, attachments_json
+      FROM (
+        SELECT id, user_id, user_name, text, created_at, attachments_json
+        FROM messages
+        ORDER BY created_at DESC
+        LIMIT ?
+      ) recent
+      ORDER BY created_at ASC
+      `,
+      [safeLimit]
+    );
+
+    return rows.map(mapMessage);
   }
 
   async storeUpload(userId: string, input: { fileName: string; mimeType: string; size: number; buffer: Buffer }): Promise<StoredUpload> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+
     const user = await this.getUser(userId);
     if (!user || user.status !== 'approved') {
       throw new Error('User is not approved.');
@@ -245,8 +254,9 @@ class ChatStore {
     const now = Date.now();
     await this.cleanupUploads(now);
 
-    const metas = await this.getUploadMetas();
-    const totalBytes = metas.reduce((sum, meta) => sum + meta.size, 0);
+    const [sumRows] = await pool.query<CountRow[]>('SELECT COALESCE(SUM(size), 0) AS total FROM uploads');
+    const totalBytes = asNumber(sumRows[0]?.total, 0);
+
     if (totalBytes + input.size > CHAT_LIMITS.uploadMaxTotalBytes) {
       throw new Error('Upload memory limit reached.');
     }
@@ -261,30 +271,10 @@ class ChatStore {
       uploadedBy: userId
     };
 
-    const record: UploadRecord = {
-      id: stored.id,
-      fileName: stored.fileName,
-      mimeType: stored.mimeType,
-      size: stored.size,
-      uploadedBy: stored.uploadedBy,
-      uploadedAt: stored.uploadedAt,
-      bufferBase64: stored.buffer.toString('base64')
-    };
-
-    const redis = getRedisClient();
-    await redis.set(uploadKey(stored.id), JSON.stringify(record), {
-      ex: Math.ceil(CHAT_LIMITS.uploadTtlMs / 1000)
-    });
-    await redis.hset(KEYS.uploadsMeta, {
-      [stored.id]: JSON.stringify({
-        id: stored.id,
-        fileName: stored.fileName,
-        mimeType: stored.mimeType,
-        size: stored.size,
-        uploadedBy: stored.uploadedBy,
-        uploadedAt: stored.uploadedAt
-      } satisfies UploadMeta)
-    });
+    await pool.query<ResultSetHeader>(
+      'INSERT INTO uploads (id, file_name, mime_type, size, uploaded_by, uploaded_at, buffer) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [stored.id, stored.fileName, stored.mimeType, stored.size, stored.uploadedBy, stored.uploadedAt, stored.buffer]
+    );
 
     await this.enforceUploadCountLimit();
 
@@ -292,29 +282,32 @@ class ChatStore {
   }
 
   async getUpload(fileId: string): Promise<StoredUpload | null> {
-    const redis = getRedisClient();
-    const raw = await redis.get<string>(uploadKey(fileId));
+    await this.ensureReady();
+    const pool = getMysqlPool();
 
-    if (typeof raw !== 'string') {
-      await redis.hdel(KEYS.uploadsMeta, fileId);
+    const [rows] = await pool.query<UploadRow[]>(
+      'SELECT id, file_name, mime_type, size, uploaded_by, uploaded_at, buffer FROM uploads WHERE id = ? LIMIT 1',
+      [fileId]
+    );
+
+    const row = rows[0];
+    if (!row) {
       return null;
     }
 
-    const record = parseJson<UploadRecord>(raw);
-    if (!record) {
-      await redis.del(uploadKey(fileId));
-      await redis.hdel(KEYS.uploadsMeta, fileId);
+    if (Date.now() - asNumber(row.uploaded_at) > CHAT_LIMITS.uploadTtlMs) {
+      await pool.query<ResultSetHeader>('DELETE FROM uploads WHERE id = ?', [fileId]);
       return null;
     }
 
     return {
-      id: record.id,
-      fileName: record.fileName,
-      mimeType: record.mimeType,
-      size: record.size,
-      uploadedBy: record.uploadedBy,
-      uploadedAt: record.uploadedAt,
-      buffer: Buffer.from(record.bufferBase64, 'base64')
+      id: row.id,
+      fileName: row.file_name,
+      mimeType: row.mime_type,
+      size: asNumber(row.size),
+      uploadedBy: row.uploaded_by,
+      uploadedAt: asNumber(row.uploaded_at),
+      buffer: Buffer.isBuffer(row.buffer) ? row.buffer : Buffer.from(row.buffer as unknown as Uint8Array)
     };
   }
 
@@ -337,43 +330,65 @@ class ChatStore {
     };
   }
 
-  private async getUploadMetas(): Promise<UploadMeta[]> {
-    const values = await this.readHashValues(KEYS.uploadsMeta);
-    return values
-      .map((raw) => parseJson<UploadMeta>(raw))
-      .filter((meta): meta is UploadMeta => !!meta)
-      .sort((a, b) => a.uploadedAt - b.uploadedAt);
-  }
+  private async enforceMessageLimit(): Promise<void> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
 
-  private async cleanupUploads(now = Date.now()): Promise<void> {
-    const redis = getRedisClient();
-    const metas = await this.getUploadMetas();
-
-    for (const meta of metas) {
-      const isExpiredByTime = now - meta.uploadedAt > CHAT_LIMITS.uploadTtlMs;
-      const exists = await redis.exists(uploadKey(meta.id));
-
-      if (isExpiredByTime || exists === 0) {
-        await redis.del(uploadKey(meta.id));
-        await redis.hdel(KEYS.uploadsMeta, meta.id);
-      }
-    }
-  }
-
-  private async enforceUploadCountLimit(): Promise<void> {
-    const redis = getRedisClient();
-    const metas = await this.getUploadMetas();
-
-    if (metas.length <= CHAT_LIMITS.maxUploadsInMemory) {
+    const [countRows] = await pool.query<CountRow[]>('SELECT COUNT(*) AS total FROM messages');
+    const total = asNumber(countRows[0]?.total, 0);
+    if (total <= CHAT_LIMITS.maxMessagesInMemory) {
       return;
     }
 
-    const toDelete = metas.slice(0, metas.length - CHAT_LIMITS.maxUploadsInMemory);
+    const overflow = total - CHAT_LIMITS.maxMessagesInMemory;
+    const [rows] = await pool.query<IdRow[]>('SELECT id FROM messages ORDER BY created_at ASC LIMIT ?', [overflow]);
+    const ids = rows
+      .map((row: IdRow) => row.id)
+      .filter((id: string): id is string => typeof id === 'string' && id.length > 0);
 
-    for (const meta of toDelete) {
-      await redis.del(uploadKey(meta.id));
-      await redis.hdel(KEYS.uploadsMeta, meta.id);
+    if (ids.length === 0) {
+      return;
     }
+
+    const placeholders = ids.map(() => '?').join(',');
+    await pool.query<ResultSetHeader>(`DELETE FROM messages WHERE id IN (${placeholders})`, ids);
+  }
+
+  private async cleanupUploads(now = Date.now()): Promise<void> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+
+    const minUploadedAt = now - CHAT_LIMITS.uploadTtlMs;
+    await pool.query<ResultSetHeader>('DELETE FROM uploads WHERE uploaded_at < ?', [minUploadedAt]);
+  }
+
+  private async enforceUploadCountLimit(): Promise<void> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+
+    const [countRows] = await pool.query<CountRow[]>('SELECT COUNT(*) AS total FROM uploads');
+    const total = asNumber(countRows[0]?.total, 0);
+
+    if (total <= CHAT_LIMITS.maxUploadsInMemory) {
+      return;
+    }
+
+    const overflow = total - CHAT_LIMITS.maxUploadsInMemory;
+    const [rows] = await pool.query<UploadMetaRow[]>(
+      'SELECT id, file_name, mime_type, size, uploaded_by, uploaded_at FROM uploads ORDER BY uploaded_at ASC LIMIT ?',
+      [overflow]
+    );
+
+    const ids = rows
+      .map((row: UploadMetaRow) => row.id)
+      .filter((id: string) => typeof id === 'string' && id.length > 0);
+
+    if (ids.length === 0) {
+      return;
+    }
+
+    const placeholders = ids.map(() => '?').join(',');
+    await pool.query<ResultSetHeader>(`DELETE FROM uploads WHERE id IN (${placeholders})`, ids);
   }
 }
 

@@ -20,6 +20,7 @@
     "vercel:preflight": "npm run check:all && npm run vercel:build"
   },
   "dependencies": {
+    "mysql2": "3.11.3",
     "next": "14.2.20",
     "react": "18.3.1",
     "react-dom": "18.3.1"

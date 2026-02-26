@@ -1,4 +1,5 @@
-import { getRedisClient } from '@/lib/redis';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
+import { ensureMysqlSchema, getMysqlPool } from '@/lib/mysql';
 
 type RateLimitResult = {
   ok: boolean;
@@ -6,19 +7,58 @@ type RateLimitResult = {
   resetInMs: number;
 };
 
-class RedisRateLimiter {
-  async check(key: string, limit: number, windowMs: number): Promise<RateLimitResult> {
-    const redis = getRedisClient();
-    const redisKey = `chat:rate:${key}`;
-    const windowSeconds = Math.max(1, Math.ceil(windowMs / 1000));
+type RateLimitRow = RowDataPacket & {
+  count: number;
+  reset_at: number;
+};
 
-    const count = await redis.incr(redisKey);
-    if (count === 1) {
-      await redis.expire(redisKey, windowSeconds);
+function asNumber(value: unknown, fallback = 0): number {
+  if (typeof value === 'number') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+  return fallback;
+}
+
+class MysqlRateLimiter {
+  async check(key: string, limit: number, windowMs: number): Promise<RateLimitResult> {
+    await ensureMysqlSchema();
+    const pool = getMysqlPool();
+    const now = Date.now();
+    const resetAt = now + windowMs;
+
+    const [rows] = await pool.query<RateLimitRow[]>(
+      'SELECT count, reset_at FROM rate_limits WHERE rate_key = ? LIMIT 1',
+      [key]
+    );
+
+    const existing = rows[0];
+    let count = 1;
+    let activeResetAt = resetAt;
+
+    if (!existing) {
+      await pool.query<ResultSetHeader>(
+        'INSERT INTO rate_limits (rate_key, count, reset_at) VALUES (?, ?, ?)',
+        [key, count, activeResetAt]
+      );
+    } else if (asNumber(existing.reset_at) <= now) {
+      await pool.query<ResultSetHeader>(
+        'UPDATE rate_limits SET count = ?, reset_at = ? WHERE rate_key = ?',
+        [count, activeResetAt, key]
+      );
+    } else {
+      activeResetAt = asNumber(existing.reset_at, resetAt);
+      count = asNumber(existing.count, 0) + 1;
+      await pool.query<ResultSetHeader>(
+        'UPDATE rate_limits SET count = ? WHERE rate_key = ?',
+        [count, key]
+      );
     }
 
-    const ttlSeconds = await redis.ttl(redisKey);
-    const resetInMs = (typeof ttlSeconds === 'number' && ttlSeconds > 0 ? ttlSeconds : windowSeconds) * 1000;
+    const resetInMs = Math.max(1, activeResetAt - now);
 
     if (count > limit) {
       return {
@@ -38,7 +78,7 @@ class RedisRateLimiter {
 
 declare global {
   // eslint-disable-next-line no-var
-  var __redisRateLimiter: RedisRateLimiter | undefined;
+  var __mysqlRateLimiter: MysqlRateLimiter | undefined;
 }
 
-export const rateLimiter = globalThis.__redisRateLimiter ?? (globalThis.__redisRateLimiter = new RedisRateLimiter());
+export const rateLimiter = globalThis.__mysqlRateLimiter ?? (globalThis.__mysqlRateLimiter = new MysqlRateLimiter());
