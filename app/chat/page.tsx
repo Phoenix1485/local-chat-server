@@ -396,7 +396,7 @@ function ChatPageContent() {
 
         <div className="flex-1 space-y-3 overflow-y-auto pr-1">
           {messages.map((message) => (
-            <article key={message.id} className="glass-card rounded-lg px-3 py-2">
+            <article key={message.id} className="glass-card rounded-lg max-h-96 overflow-y-auto px-3 py-2">
               <header className="mb-1 flex items-center justify-between gap-2">
                 <span className="text-sm font-semibold text-accent">{message.userName}</span>
                 <time className="text-xs text-slate-400">{formatTime(message.createdAt)}</time>
@@ -451,11 +451,10 @@ function ChatPageContent() {
               <li key={chat.id}>
                 <button
                   type="button"
-                  className={`w-full rounded-md border px-3 py-2 text-left text-sm ${
-                    chat.id === activeChatId
+                  className={`w-full rounded-md border px-3 py-2 text-left text-sm ${chat.id === activeChatId
                       ? 'border-cyan-300/50 bg-cyan-500/10 text-cyan-100'
                       : 'border-slate-700/80 bg-slate-900/50 text-slate-200 hover:border-slate-600 hover:bg-slate-800/70'
-                  }`}
+                    }`}
                   onClick={() => {
                     setActiveChatId(chat.id);
                     setMessages([]);
