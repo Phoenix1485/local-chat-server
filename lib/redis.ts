@@ -68,6 +68,10 @@ class RedisRestClient {
     return this.exec<T | null>('HGETALL', [key]);
   }
 
+  async hvals<T = string[]>(key: string): Promise<T> {
+    return this.exec<T>('HVALS', [key]);
+  }
+
   async hdel(key: string, field: string): Promise<number> {
     return this.exec<number>('HDEL', [key, field]);
   }

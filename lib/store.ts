@@ -106,6 +106,23 @@ function parseHashValues(hash: unknown): unknown[] {
 }
 
 class ChatStore {
+  private async readHashValues(key: string): Promise<unknown[]> {
+    const redis = getRedisClient();
+
+    // Prefer HVALS to avoid provider-specific HGETALL result layouts.
+    try {
+      const rawValues = await redis.hvals<unknown[]>(key);
+      if (Array.isArray(rawValues)) {
+        return rawValues;
+      }
+    } catch {
+      // Fall back to HGETALL parsing below.
+    }
+
+    const rawHash = await redis.hgetall<unknown>(key);
+    return parseHashValues(rawHash);
+  }
+
   async createUser(name: string, ip: string): Promise<UserSession> {
     const now = Date.now();
     const user: UserSession = {
@@ -145,10 +162,8 @@ class ChatStore {
   }
 
   async listUsersByStatus(status: UserStatus): Promise<UserSession[]> {
-    const redis = getRedisClient();
-    const rawUsers = await redis.hgetall<Record<string, string>>(KEYS.users);
-
-    return parseHashValues(rawUsers)
+    const values = await this.readHashValues(KEYS.users);
+    return values
       .map((raw) => parseJson<UserSession>(raw))
       .filter((user): user is UserSession => !!user && user.status === status)
       .sort((a, b) => a.createdAt - b.createdAt);
@@ -289,10 +304,8 @@ class ChatStore {
   }
 
   private async getUploadMetas(): Promise<UploadMeta[]> {
-    const redis = getRedisClient();
-    const rawMeta = await redis.hgetall<Record<string, string>>(KEYS.uploadsMeta);
-
-    return parseHashValues(rawMeta)
+    const values = await this.readHashValues(KEYS.uploadsMeta);
+    return values
       .map((raw) => parseJson<UploadMeta>(raw))
       .filter((meta): meta is UploadMeta => !!meta)
       .sort((a, b) => a.uploadedAt - b.uploadedAt);
