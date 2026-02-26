@@ -6,6 +6,7 @@ import type { AdminSnapshot } from '@/types/chat';
 import { StatusPill } from '@/components/StatusPill';
 
 const EMPTY_SNAPSHOT: AdminSnapshot = {
+  users: [],
   pending: [],
   approved: [],
   rejected: [],

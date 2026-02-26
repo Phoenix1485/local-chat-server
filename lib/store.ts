@@ -109,6 +109,22 @@ class ChatStore {
   private async readHashValues(key: string): Promise<unknown[]> {
     const redis = getRedisClient();
 
+    // Read all hash fields explicitly to ensure we always get complete values from Redis.
+    try {
+      const fields = await redis.hkeys<unknown>(key);
+      if (Array.isArray(fields) && fields.length > 0) {
+        const rawValues = await Promise.all(
+          fields
+            .filter((field): field is string => typeof field === 'string' && field.length > 0)
+            .map((field) => redis.hget<unknown>(key, field))
+        );
+
+        return rawValues.filter((value): value is unknown => value != null);
+      }
+    } catch {
+      // Fall back to command variants below.
+    }
+
     // Prefer HVALS to avoid provider-specific HGETALL result layouts.
     try {
       const rawValues = await redis.hvals<unknown[]>(key);
@@ -121,6 +137,14 @@ class ChatStore {
 
     const rawHash = await redis.hgetall<unknown>(key);
     return parseHashValues(rawHash);
+  }
+
+  async listUsers(): Promise<UserSession[]> {
+    const values = await this.readHashValues(KEYS.users);
+    return values
+      .map((raw) => parseJson<UserSession>(raw))
+      .filter((user): user is UserSession => !!user)
+      .sort((a, b) => a.createdAt - b.createdAt);
   }
 
   async createUser(name: string, ip: string): Promise<UserSession> {
@@ -288,14 +312,17 @@ class ChatStore {
   }
 
   async getAdminSnapshot(): Promise<AdminSnapshot> {
-    const [pending, approved, rejected, recentMessages] = await Promise.all([
-      this.listUsersByStatus('pending'),
-      this.listUsersByStatus('approved'),
-      this.listUsersByStatus('rejected'),
+    const [users, recentMessages] = await Promise.all([
+      this.listUsers(),
       this.getRecentMessages(60)
     ]);
 
+    const pending = users.filter((user) => user.status === 'pending');
+    const approved = users.filter((user) => user.status === 'approved');
+    const rejected = users.filter((user) => user.status === 'rejected');
+
     return {
+      users,
       pending,
       approved,
       rejected,

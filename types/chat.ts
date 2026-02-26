@@ -32,6 +32,7 @@ export type StoredUpload = ChatAttachment & {
 };
 
 export type AdminSnapshot = {
+  users: UserSession[];
   pending: UserSession[];
   approved: UserSession[];
   rejected: UserSession[];
