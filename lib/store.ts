@@ -63,10 +63,41 @@ function parseHashValues(hash: unknown): unknown[] {
         .filter((value): value is unknown => value !== null);
     }
 
+    // Some providers return [{ field, value }, ...] or [{ key, value }, ...]
+    if (
+      typeof hash[0] === 'object' &&
+      hash[0] !== null &&
+      ('value' in (hash[0] as Record<string, unknown>) || 'Value' in (hash[0] as Record<string, unknown>))
+    ) {
+      const values = hash
+        .map((entry) => {
+          if (!entry || typeof entry !== 'object') {
+            return null;
+          }
+
+          const record = entry as Record<string, unknown>;
+          if ('value' in record) {
+            return record.value ?? null;
+          }
+
+          if ('Value' in record) {
+            return record.Value ?? null;
+          }
+
+          return null;
+        })
+        .filter((value) => value !== null);
+
+      return values as unknown[];
+    }
+
     // Upstash REST default format: [field, value, field, value, ...]
     const values: unknown[] = [];
-    for (let i = 1; i < hash.length; i += 2) {
-      values.push(hash[i]);
+    for (let i = 0; i < hash.length; i += 2) {
+      const maybeValue = hash[i + 1];
+      if (maybeValue !== undefined) {
+        values.push(maybeValue);
+      }
     }
     return values;
   }
