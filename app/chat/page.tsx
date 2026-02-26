@@ -383,7 +383,7 @@ function ChatPageContent() {
 
   return (
     <main className="grid gap-4 md:grid-cols-[1fr_320px]">
-      <section className="glass-panel flex min-h-[65vh] flex-col rounded-2xl p-4">
+      <section className="glass-panel flex h-[calc(100dvh-10.5rem)] min-h-0 max-h-[calc(100dvh-10.5rem)] flex-col rounded-2xl p-4">
         <div className="mb-3 flex items-center justify-between border-b border-slate-700/70 pb-2">
           <div>
             <h1 className="text-xl font-semibold">{activeChat?.name ?? 'Chat'}</h1>
@@ -394,9 +394,9 @@ function ChatPageContent() {
           </span>
         </div>
 
-        <div className="flex-1 space-y-3 overflow-y-auto pr-1">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
           {messages.map((message) => (
-            <article key={message.id} className="glass-card rounded-lg max-h-96 overflow-y-auto px-3 py-2">
+            <article key={message.id} className="glass-card rounded-lg px-3 py-2">
               <header className="mb-1 flex items-center justify-between gap-2">
                 <span className="text-sm font-semibold text-accent">{message.userName}</span>
                 <time className="text-xs text-slate-400">{formatTime(message.createdAt)}</time>
@@ -443,7 +443,7 @@ function ChatPageContent() {
         {error ? <p className="alert-error mt-3 rounded-md px-3 py-2 text-sm">{error}</p> : null}
       </section>
 
-      <aside className="glass-panel space-y-4 rounded-2xl p-4">
+      <aside className="glass-panel max-h-[calc(100dvh-10.5rem)] space-y-4 overflow-y-auto rounded-2xl p-4">
         <section>
           <h2 className="surface-muted text-xs font-semibold uppercase tracking-wide">Chats</h2>
           <ul className="mt-2 space-y-2">
