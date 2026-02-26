@@ -29,3 +29,7 @@ export function validateMessage(text: string, maxLength: number): string | null 
 
   return null;
 }
+
+export function validateRoomName(name: string, min: number, max: number): string | null {
+  return validateName(name, min, max);
+}

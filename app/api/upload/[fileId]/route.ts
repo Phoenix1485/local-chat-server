@@ -8,9 +8,16 @@ export async function GET(
   request: Request,
   { params }: { params: { fileId: string } }
 ): Promise<Response> {
-  const sessionId = new URL(request.url).searchParams.get('sessionId')?.trim();
+  const url = new URL(request.url);
+  const sessionId = url.searchParams.get('sessionId')?.trim();
+  const chatId = url.searchParams.get('chatId')?.trim();
+
   if (!sessionId) {
     return jsonError('Missing sessionId.', 400);
+  }
+
+  if (!chatId) {
+    return jsonError('Missing chatId.', 400);
   }
 
   const user = await chatStore.getUser(sessionId);
@@ -25,6 +32,15 @@ export async function GET(
   const upload = await chatStore.getUpload(params.fileId);
   if (!upload) {
     return jsonError('File expired or not found.', 404);
+  }
+
+  if (upload.chatId !== chatId) {
+    return jsonError('File does not belong to this chat.', 403);
+  }
+
+  const accessibleChat = await chatStore.getAccessibleChatForUser(sessionId, chatId);
+  if (!accessibleChat) {
+    return jsonError('Chat not accessible.', 403);
   }
 
   const safeFileName = upload.fileName.replace(/"/g, '_');

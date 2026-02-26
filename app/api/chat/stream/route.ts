@@ -10,9 +10,14 @@ export const maxDuration = 300;
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const sessionId = url.searchParams.get('sessionId');
+  const chatId = url.searchParams.get('chatId')?.trim();
 
   if (!sessionId) {
     return jsonError('Missing sessionId.', 400);
+  }
+
+  if (!chatId) {
+    return jsonError('Missing chatId.', 400);
   }
 
   const user = await chatStore.getUser(sessionId);
@@ -24,7 +29,14 @@ export async function GET(request: Request): Promise<Response> {
     return jsonError('Session is not approved.', 403);
   }
 
-  const initialMessages = await chatStore.getRecentMessages();
+  const accessibleChat = await chatStore.getAccessibleChatForUser(sessionId, chatId);
+  if (!accessibleChat) {
+    return jsonError('Chat not accessible.', 403);
+  }
+
+  await chatStore.touchUserPresence(sessionId);
+
+  const initialMessages = await chatStore.getRecentMessages(chatId);
 
   return createSseResponse(request, (send, close) => {
     let closed = false;
@@ -38,6 +50,8 @@ export async function GET(request: Request): Promise<Response> {
       if (closed) {
         return;
       }
+
+      await chatStore.touchUserPresence(sessionId);
 
       const latestUser = await chatStore.getUser(sessionId);
       if (!latestUser) {
@@ -55,7 +69,14 @@ export async function GET(request: Request): Promise<Response> {
         }
       }
 
-      const messages = await chatStore.getRecentMessages();
+      const latestChat = await chatStore.getAccessibleChatForUser(sessionId, chatId);
+      if (!latestChat) {
+        send('chat', { status: 'unavailable' });
+        close();
+        return;
+      }
+
+      const messages = await chatStore.getRecentMessages(chatId);
       for (const message of messages) {
         if (sentMessageIds.has(message.id)) {
           continue;

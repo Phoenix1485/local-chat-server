@@ -49,7 +49,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   if (payload.action === 'approve') {
-    await chatStore.addMessage(sessionId, 'joined the chat');
+    await chatStore.addMessage(sessionId, chatStore.getGlobalChatId(), 'joined the chat');
   }
 
   return Response.json({ user: updatedUser });

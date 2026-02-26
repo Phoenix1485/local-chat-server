@@ -14,11 +14,16 @@ function sanitizeFileName(name: string): string {
 export async function POST(request: Request): Promise<Response> {
   const formData = await request.formData();
   const sessionId = String(formData.get('sessionId') ?? '').trim();
+  const chatId = String(formData.get('chatId') ?? '').trim();
   const text = String(formData.get('text') ?? '').trim();
   const file = formData.get('file');
 
   if (!sessionId) {
     return jsonError('Missing sessionId.', 400);
+  }
+
+  if (!chatId) {
+    return jsonError('Missing chatId.', 400);
   }
 
   const limit = await rateLimiter.check(`upload:${sessionId}`, 8, 60_000);
@@ -33,6 +38,11 @@ export async function POST(request: Request): Promise<Response> {
 
   if (user.status !== 'approved') {
     return jsonError('Session is not approved.', 403);
+  }
+
+  const accessibleChat = await chatStore.getAccessibleChatForUser(sessionId, chatId);
+  if (!accessibleChat) {
+    return jsonError('Chat not accessible.', 403);
   }
 
   if (!(file instanceof File)) {
@@ -61,7 +71,7 @@ export async function POST(request: Request): Promise<Response> {
 
   let stored;
   try {
-    stored = await chatStore.storeUpload(sessionId, {
+    stored = await chatStore.storeUpload(sessionId, chatId, {
       fileName: sanitizeFileName(file.name),
       mimeType: file.type || 'application/octet-stream',
       size: file.size,
@@ -81,7 +91,7 @@ export async function POST(request: Request): Promise<Response> {
     uploadedBy: stored.uploadedBy
   };
 
-  const message = await chatStore.addMessage(sessionId, messageText, [attachment]);
+  const message = await chatStore.addMessage(sessionId, chatId, messageText, [attachment]);
   if (!message) {
     return jsonError('Upload stored but chat message could not be created.', 500);
   }

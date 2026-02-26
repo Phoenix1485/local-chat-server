@@ -139,7 +139,23 @@ export default function AdminPage() {
   const approvedUsers = snapshot?.approved ?? [];
   const rejectedUsers = snapshot?.rejected ?? [];
   const recentMessages = snapshot?.recentMessages ?? [];
+  const activeChats = snapshot?.activeChats ?? [];
+  const deactivatedChats = snapshot?.deactivatedChats ?? [];
   const pendingCount = useMemo(() => pendingUsers.length, [pendingUsers.length]);
+
+  const readServerError = async (response: Response, fallback: string): Promise<string> => {
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.includes('application/json')) {
+      return fallback;
+    }
+
+    const payload = await response.json().catch(() => null);
+    if (payload && typeof payload === 'object' && 'error' in payload) {
+      return String(payload.error);
+    }
+
+    return fallback;
+  };
 
   const applyDecision = async (sessionId: string, action: 'approve' | 'reject' | 'kick') => {
     if (!activeToken) {
@@ -161,20 +177,45 @@ export default function AdminPage() {
       });
 
       if (!response.ok) {
-        const contentType = response.headers.get('content-type') ?? '';
-        const payload =
-          contentType.includes('application/json')
-            ? await response.json().catch(() => null)
-            : null;
-        const serverError =
-          payload && typeof payload === 'object' && 'error' in payload ? String(payload.error) : null;
-        throw new Error(serverError ?? 'Aktion fehlgeschlagen.');
+        throw new Error(await readServerError(response, 'Aktion fehlgeschlagen.'));
       }
 
       const next = await fetchSnapshot(activeToken);
       setSnapshot(next);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Aktion fehlgeschlagen.');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const reactivateChat = async (chatId: string) => {
+    if (!activeToken) {
+      setError('Admin-Token fehlt.');
+      return;
+    }
+
+    setIsUpdating(true);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/admin/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-token': activeToken
+        },
+        body: JSON.stringify({ action: 'reactivate', chatId })
+      });
+
+      if (!response.ok) {
+        throw new Error(await readServerError(response, 'Chat konnte nicht reaktiviert werden.'));
+      }
+
+      const next = await fetchSnapshot(activeToken);
+      setSnapshot(next);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Chat konnte nicht reaktiviert werden.');
     } finally {
       setIsUpdating(false);
     }
@@ -317,11 +358,58 @@ export default function AdminPage() {
       </section> : null}
 
       {snapshot ? <section className="glass-panel rounded-2xl p-4">
+        <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">Chats</h2>
+        <ul className="mt-3 space-y-2">
+          {activeChats.map((chat) => (
+            <li key={chat.id} className="glass-card rounded-lg p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-100">{chat.name}</p>
+                  <p className="text-xs text-slate-400">
+                    {chat.isGlobal ? 'Global' : 'Aktiv'} - Mitglieder: {chat.membersCount}
+                  </p>
+                </div>
+              </div>
+            </li>
+          ))}
+          {activeChats.length === 0 ? <li className="surface-muted text-sm">Keine aktiven Chats.</li> : null}
+        </ul>
+
+        <h3 className="surface-muted mt-5 text-sm font-semibold uppercase tracking-wide">Deaktiviert</h3>
+        <ul className="mt-3 space-y-2">
+          {deactivatedChats.map((chat) => (
+            <li key={chat.id} className="glass-card rounded-lg p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-100">{chat.name}</p>
+                  <p className="text-xs text-slate-400">
+                    Deactivated: {chat.deactivatedAt ? new Date(chat.deactivatedAt).toLocaleString() : 'n/a'}
+                    {chat.deactivatedByName ? ` von ${chat.deactivatedByName}` : ''}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={isUpdating}
+                  onClick={() => reactivateChat(chat.id)}
+                  className="rounded-md bg-emerald-500/80 px-2 py-1.5 text-xs font-semibold text-emerald-50 hover:bg-emerald-400 disabled:opacity-60"
+                >
+                  Reaktivieren
+                </button>
+              </div>
+            </li>
+          ))}
+          {deactivatedChats.length === 0 ? <li className="surface-muted text-sm">Keine deaktivierten Chats.</li> : null}
+        </ul>
+      </section> : null}
+
+      {snapshot ? <section className="glass-panel rounded-2xl p-4">
         <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">Letzte Nachrichten</h2>
         <ul className="mt-3 space-y-2">
           {recentMessages.map((message) => (
             <li key={message.id} className="glass-card rounded-lg p-3">
-              <p className="text-xs text-slate-400">{new Date(message.createdAt).toLocaleTimeString()} - {message.userName}</p>
+              <p className="text-xs text-slate-400">
+                {new Date(message.createdAt).toLocaleTimeString()} - [{message.chatName}] {message.userName}
+              </p>
               <p className="mt-1 text-sm text-slate-100">{message.text}</p>
             </li>
           ))}

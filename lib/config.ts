@@ -1,14 +1,20 @@
 export const CHAT_LIMITS = {
   nameMinLength: 2,
   nameMaxLength: 24,
+  roomNameMinLength: 2,
+  roomNameMaxLength: 48,
   messageMaxLength: 1000,
   uploadMaxBytes: 10 * 1024 * 1024 * 1024,      // 10 GB pro Datei
   uploadMaxTotalBytes: 20 * 1024 * 1024 * 1024,  // 10 GB gesamt
   maxMessagesInMemory: 300,
   maxUploadsInMemory: 120,
   uploadTtlMs: 30 * 60 * 1000,
+  userOnlineTtlMs: 60_000,
+  deactivatedChatRetentionMs: 30 * 24 * 60 * 60 * 1000,
   sseKeepAliveMs: 15000
 } as const;
+
+export const GLOBAL_CHAT_ID = '00000000-0000-0000-0000-000000000001';
 
 function parsePositiveInt(input: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(input ?? '', 10);
