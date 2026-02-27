@@ -395,7 +395,7 @@ export default function AdminPage() {
             onClick={() => {
               void deleteAccounts('selected');
             }}
-            className="rounded-md bg-rose-500/80 px-3 py-2 text-sm font-semibold text-rose-50 hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-60"
+            className="btn-soft btn-danger disabled:cursor-not-allowed disabled:opacity-60"
           >
             Ausgewaehlte loeschen ({selectedUserIds.length})
           </button>
@@ -405,7 +405,7 @@ export default function AdminPage() {
             onClick={() => {
               void deleteAccounts('all');
             }}
-            className="rounded-md border border-rose-500/35 bg-rose-500/10 px-3 py-2 text-sm font-semibold text-rose-200 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+            className="btn-soft btn-danger-soft disabled:cursor-not-allowed disabled:opacity-60"
           >
             Alle Accounts loeschen ({allUsers.length})
           </button>
@@ -430,7 +430,7 @@ export default function AdminPage() {
                     type="button"
                     disabled={isUpdating}
                     onClick={() => applyDecision(user.id, 'approve')}
-                    className="flex-1 rounded-md bg-emerald-500/80 px-2 py-1.5 text-xs font-semibold text-emerald-50 hover:bg-emerald-400 disabled:opacity-60"
+                    className="btn-soft btn-success flex-1 px-2 py-1.5 text-xs disabled:opacity-60"
                   >
                     Freigeben
                   </button>
@@ -438,7 +438,7 @@ export default function AdminPage() {
                     type="button"
                     disabled={isUpdating}
                     onClick={() => applyDecision(user.id, 'reject')}
-                    className="flex-1 rounded-md bg-rose-500/80 px-2 py-1.5 text-xs font-semibold text-rose-50 hover:bg-rose-400 disabled:opacity-60"
+                    className="btn-soft btn-danger flex-1 px-2 py-1.5 text-xs disabled:opacity-60"
                   >
                     Ablehnen
                   </button>
@@ -463,7 +463,7 @@ export default function AdminPage() {
                     type="button"
                     disabled={isUpdating}
                     onClick={() => applyDecision(user.id, 'kick')}
-                    className="w-full rounded-md bg-amber-500/80 px-2 py-1.5 text-xs font-semibold text-amber-50 hover:bg-amber-400 disabled:opacity-60"
+                    className="btn-soft btn-warning w-full px-2 py-1.5 text-xs disabled:opacity-60"
                   >
                     Aus Chat entfernen
                   </button>
@@ -522,7 +522,7 @@ export default function AdminPage() {
                   type="button"
                   disabled={isUpdating}
                   onClick={() => reactivateChat(chat.id)}
-                  className="rounded-md bg-emerald-500/80 px-2 py-1.5 text-xs font-semibold text-emerald-50 hover:bg-emerald-400 disabled:opacity-60"
+                  className="btn-soft btn-success px-2 py-1.5 text-xs disabled:opacity-60"
                 >
                   Reaktivieren
                 </button>

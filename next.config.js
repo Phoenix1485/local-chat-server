@@ -1,6 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  webpack(config) {
+    // Avoid noisy filesystem-cache snapshot warnings from corrupted nested node_modules entries.
+    config.cache = { type: 'memory' };
+    return config;
+  },
   async headers() {
     return [
       {

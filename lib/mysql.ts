@@ -127,9 +127,21 @@ async function createSchema(): Promise<void> {
       created_at BIGINT NOT NULL,
       updated_at BIGINT NOT NULL,
       is_global TINYINT(1) NOT NULL DEFAULT 0,
+      chat_type ENUM('global','group','direct') NOT NULL DEFAULT 'group',
+      group_invite_mode ENUM('direct','invite_link') NOT NULL DEFAULT 'direct',
+      group_invite_policy ENUM('everyone','admins','owner') NOT NULL DEFAULT 'admins',
+      group_everyone_mention_policy ENUM('everyone','admins','owner') NOT NULL DEFAULT 'admins',
+      group_here_mention_policy ENUM('everyone','admins','owner') NOT NULL DEFAULT 'admins',
+      group_invite_code VARCHAR(64) NULL,
+      group_invite_code_updated_at BIGINT NULL,
+      group_auto_hide_24h TINYINT(1) NOT NULL DEFAULT 0,
+      dm_key VARCHAR(80) NULL,
       deactivated_at BIGINT NULL,
       deactivated_by CHAR(36) NULL,
       INDEX idx_chats_is_global (is_global),
+      INDEX idx_chats_chat_type (chat_type),
+      UNIQUE KEY uq_chats_dm_key (dm_key),
+      UNIQUE KEY uq_chats_group_invite_code (group_invite_code),
       INDEX idx_chats_deactivated_at (deactivated_at),
       CONSTRAINT fk_chats_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
       CONSTRAINT fk_chats_deactivated_by FOREIGN KEY (deactivated_by) REFERENCES users(id) ON DELETE SET NULL
@@ -141,9 +153,11 @@ async function createSchema(): Promise<void> {
       chat_id CHAR(36) NOT NULL,
       user_id CHAR(36) NOT NULL,
       joined_at BIGINT NOT NULL,
+      member_role ENUM('owner','admin','member') NOT NULL DEFAULT 'member',
       left_at BIGINT NULL,
       PRIMARY KEY (chat_id, user_id),
       INDEX idx_memberships_user_id (user_id),
+      INDEX idx_memberships_role (member_role),
       INDEX idx_memberships_left_at (left_at),
       CONSTRAINT fk_memberships_chat FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
       CONSTRAINT fk_memberships_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -196,11 +210,107 @@ async function createSchema(): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS chat_reads (
+      chat_id CHAR(36) NOT NULL,
+      user_id CHAR(36) NOT NULL,
+      last_read_at BIGINT NOT NULL,
+      PRIMARY KEY (chat_id, user_id),
+      INDEX idx_chat_reads_user (user_id),
+      INDEX idx_chat_reads_last_read (last_read_at),
+      CONSTRAINT fk_chat_reads_chat FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+      CONSTRAINT fk_chat_reads_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS rate_limits (
       rate_key VARCHAR(191) PRIMARY KEY,
       count INT NOT NULL,
       reset_at BIGINT NOT NULL,
       INDEX idx_rate_limits_reset_at (reset_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS auth_accounts (
+      user_id CHAR(36) PRIMARY KEY,
+      username VARCHAR(24) NOT NULL,
+      username_norm VARCHAR(24) NOT NULL,
+      email VARCHAR(190) NULL,
+      email_norm VARCHAR(190) NULL,
+      password_hash VARCHAR(255) NOT NULL,
+      first_name VARCHAR(64) NOT NULL,
+      last_name VARCHAR(64) NOT NULL,
+      bio VARCHAR(280) NOT NULL DEFAULT '',
+      global_role ENUM('user','admin','superadmin') NOT NULL DEFAULT 'user',
+      avatar_blob LONGBLOB NULL,
+      avatar_mime VARCHAR(255) NULL,
+      avatar_updated_at BIGINT NULL,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      UNIQUE KEY uq_auth_accounts_username_norm (username_norm),
+      UNIQUE KEY uq_auth_accounts_email_norm (email_norm),
+      INDEX idx_auth_accounts_global_role (global_role),
+      CONSTRAINT fk_auth_accounts_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      id CHAR(36) PRIMARY KEY,
+      user_id CHAR(36) NOT NULL,
+      token_hash CHAR(64) NOT NULL,
+      created_at BIGINT NOT NULL,
+      expires_at BIGINT NOT NULL,
+      last_seen_at BIGINT NOT NULL,
+      user_agent VARCHAR(255) NULL,
+      UNIQUE KEY uq_auth_sessions_token_hash (token_hash),
+      INDEX idx_auth_sessions_user_id (user_id),
+      INDEX idx_auth_sessions_expires_at (expires_at),
+      CONSTRAINT fk_auth_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id CHAR(36) PRIMARY KEY,
+      user_id CHAR(36) NOT NULL,
+      token_hash CHAR(64) NOT NULL,
+      created_at BIGINT NOT NULL,
+      expires_at BIGINT NOT NULL,
+      used_at BIGINT NULL,
+      UNIQUE KEY uq_password_reset_tokens_hash (token_hash),
+      INDEX idx_password_reset_tokens_user_id (user_id),
+      INDEX idx_password_reset_tokens_expires_at (expires_at),
+      CONSTRAINT fk_password_reset_tokens_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS friend_requests (
+      id CHAR(36) PRIMARY KEY,
+      sender_id CHAR(36) NOT NULL,
+      receiver_id CHAR(36) NOT NULL,
+      status ENUM('pending','accepted','declined','cancelled') NOT NULL DEFAULT 'pending',
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      INDEX idx_friend_requests_sender (sender_id, status),
+      INDEX idx_friend_requests_receiver (receiver_id, status),
+      UNIQUE KEY uq_friend_request_pair_pending (sender_id, receiver_id, status),
+      CONSTRAINT fk_friend_requests_sender FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_friend_requests_receiver FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS friendships (
+      user_low CHAR(36) NOT NULL,
+      user_high CHAR(36) NOT NULL,
+      created_at BIGINT NOT NULL,
+      PRIMARY KEY (user_low, user_high),
+      INDEX idx_friendships_user_high (user_high),
+      CONSTRAINT fk_friendships_user_low FOREIGN KEY (user_low) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_friendships_user_high FOREIGN KEY (user_high) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
 
@@ -220,6 +330,52 @@ async function createSchema(): Promise<void> {
   if (!(await hasColumn(pool, 'uploads', 'chat_id'))) {
     await pool.query('ALTER TABLE uploads ADD COLUMN chat_id CHAR(36) NULL AFTER id');
   }
+  if (!(await hasColumn(pool, 'chats', 'chat_type'))) {
+    await pool.query("ALTER TABLE chats ADD COLUMN chat_type ENUM('global','group','direct') NOT NULL DEFAULT 'group' AFTER is_global");
+  }
+  if (!(await hasColumn(pool, 'chats', 'dm_key'))) {
+    await pool.query('ALTER TABLE chats ADD COLUMN dm_key VARCHAR(80) NULL AFTER chat_type');
+  }
+  if (!(await hasColumn(pool, 'chats', 'group_invite_mode'))) {
+    await pool.query("ALTER TABLE chats ADD COLUMN group_invite_mode ENUM('direct','invite_link') NOT NULL DEFAULT 'direct' AFTER chat_type");
+  }
+  if (!(await hasColumn(pool, 'chats', 'group_invite_policy'))) {
+    await pool.query("ALTER TABLE chats ADD COLUMN group_invite_policy ENUM('everyone','admins','owner') NOT NULL DEFAULT 'admins' AFTER group_invite_mode");
+  }
+  if (!(await hasColumn(pool, 'chats', 'group_everyone_mention_policy'))) {
+    await pool.query("ALTER TABLE chats ADD COLUMN group_everyone_mention_policy ENUM('everyone','admins','owner') NOT NULL DEFAULT 'admins' AFTER group_invite_policy");
+  }
+  if (!(await hasColumn(pool, 'chats', 'group_here_mention_policy'))) {
+    await pool.query("ALTER TABLE chats ADD COLUMN group_here_mention_policy ENUM('everyone','admins','owner') NOT NULL DEFAULT 'admins' AFTER group_everyone_mention_policy");
+  }
+  if (!(await hasColumn(pool, 'chats', 'group_invite_code'))) {
+    await pool.query('ALTER TABLE chats ADD COLUMN group_invite_code VARCHAR(64) NULL AFTER group_here_mention_policy');
+  }
+  if (!(await hasColumn(pool, 'chats', 'group_invite_code_updated_at'))) {
+    await pool.query('ALTER TABLE chats ADD COLUMN group_invite_code_updated_at BIGINT NULL AFTER group_invite_code');
+  }
+  if (!(await hasColumn(pool, 'chats', 'group_auto_hide_24h'))) {
+    await pool.query('ALTER TABLE chats ADD COLUMN group_auto_hide_24h TINYINT(1) NOT NULL DEFAULT 0 AFTER group_invite_code_updated_at');
+  }
+  if (!(await hasIndex(pool, 'chats', 'idx_chats_chat_type'))) {
+    await pool.query('ALTER TABLE chats ADD INDEX idx_chats_chat_type (chat_type)');
+  }
+  if (!(await hasIndex(pool, 'chats', 'uq_chats_dm_key'))) {
+    await pool.query('ALTER TABLE chats ADD UNIQUE INDEX uq_chats_dm_key (dm_key)');
+  }
+  if (!(await hasIndex(pool, 'chats', 'uq_chats_group_invite_code'))) {
+    await pool.query('ALTER TABLE chats ADD UNIQUE INDEX uq_chats_group_invite_code (group_invite_code)');
+  }
+
+  if (!(await hasColumn(pool, 'chat_memberships', 'member_role'))) {
+    await pool.query(
+      "ALTER TABLE chat_memberships ADD COLUMN member_role ENUM('owner','admin','member') NOT NULL DEFAULT 'member' AFTER joined_at"
+    );
+  }
+  if (!(await hasIndex(pool, 'chat_memberships', 'idx_memberships_role'))) {
+    await pool.query('ALTER TABLE chat_memberships ADD INDEX idx_memberships_role (member_role)');
+  }
+
   if (!(await hasIndex(pool, 'uploads', 'idx_uploads_chat_id'))) {
     await pool.query('ALTER TABLE uploads ADD INDEX idx_uploads_chat_id (chat_id)');
   }
@@ -234,6 +390,30 @@ async function createSchema(): Promise<void> {
       ON DUPLICATE KEY UPDATE id = VALUES(id), is_global = 1, deactivated_at = NULL, deactivated_by = NULL
     `,
     [GLOBAL_CHAT_ID, now, now]
+  );
+
+  await pool.query<ResultSetHeader>(
+    `
+      UPDATE chats
+      SET
+        chat_type = CASE
+          WHEN is_global = 1 THEN 'global'
+          WHEN dm_key IS NOT NULL AND dm_key <> '' THEN 'direct'
+          ELSE 'group'
+        END
+    `
+  );
+
+  await pool.query<ResultSetHeader>(
+    `
+      UPDATE chat_memberships cm
+      JOIN chats c ON c.id = cm.chat_id
+      SET cm.member_role = CASE
+        WHEN c.created_by IS NOT NULL AND c.created_by = cm.user_id THEN 'owner'
+        WHEN c.is_global = 1 THEN 'member'
+        ELSE cm.member_role
+      END
+    `
   );
 
   await pool.query<ResultSetHeader>(

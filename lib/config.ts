@@ -16,6 +16,16 @@ export const CHAT_LIMITS = {
   adminPollMs: parsePositiveInt(process.env.CHAT_ADMIN_POLL_MS, 2000)
 } as const;
 
+export const APP_LIMITS = {
+  passwordResetTtlMs: parsePositiveInt(process.env.APP_PASSWORD_RESET_TTL_MS, 30 * 60 * 1000),
+  sessionTtlMs: parsePositiveInt(process.env.APP_SESSION_TTL_MS, 30 * 24 * 60 * 60 * 1000),
+  profileAvatarMaxBytes: parsePositiveInt(process.env.APP_AVATAR_MAX_BYTES, 2 * 1024 * 1024),
+  profileFirstNameMax: 64,
+  profileLastNameMax: 64,
+  profileBioMax: 280,
+  discoverPageSize: parsePositiveInt(process.env.APP_DISCOVER_PAGE_SIZE, 60)
+} as const;
+
 export const GLOBAL_CHAT_ID = '00000000-0000-0000-0000-000000000001';
 
 function parsePositiveInt(input: string | undefined, fallback: number): number {
