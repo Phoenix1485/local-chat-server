@@ -13,6 +13,7 @@ import type {
   AppChatGif,
   AppChatMessage,
   AppGroupSettings,
+  AppModerationLog,
   AppUserProfile,
   GlobalRole,
   GroupInviteMode,
@@ -163,6 +164,14 @@ function removeTenorUrlsFromText(text: string): string {
     .trim();
 }
 
+function extractLinks(text: string): string[] {
+  const matches = text.match(/https?:\/\/[^\s)]+/gi) ?? [];
+  const cleaned = matches
+    .map((item) => item.trim().replace(/[),.;!?]+$/, ''))
+    .filter((item) => item.length > 0);
+  return [...new Set(cleaned)];
+}
+
 function getActiveMentionDraft(text: string): { startIndex: number; query: string } | null {
   const match = text.match(/(^|\s)@([^\r\n@]*)$/);
   if (!match) {
@@ -202,6 +211,35 @@ function invitePolicyLabel(policy: GroupInvitePolicy): string {
   if (policy === 'everyone') return 'Jeder';
   if (policy === 'owner') return 'Nur Superadmin';
   return 'Admins + Superadmin';
+}
+
+function moderationActionLabel(action: string): string {
+  const map: Record<string, string> = {
+    member_invited: 'Mitglied eingeladen',
+    member_promoted: 'Mitglied befoerdert',
+    member_demoted: 'Mitglied herabgestuft',
+    member_kicked: 'Mitglied entfernt',
+    ownership_transferred: 'Ownership uebertragen',
+    settings_updated: 'Gruppeneinstellungen geaendert',
+    invite_link_regenerated: 'Invite-Link neu generiert',
+    group_closed: 'Gruppe geschlossen',
+    message_edited: 'Nachricht bearbeitet',
+    message_deleted_for_all: 'Nachricht fuer alle geloescht',
+    message_pinned: 'Nachricht angepinnt',
+    message_unpinned: 'Nachricht entpinnt'
+  };
+  return map[action] ?? action.replace(/_/g, ' ');
+}
+
+function moderationDetailsLabel(details: Record<string, unknown> | null): string | null {
+  if (!details) {
+    return null;
+  }
+  const entries = Object.entries(details)
+    .filter(([, value]) => value !== null && value !== undefined && String(value).trim().length > 0)
+    .slice(0, 4)
+    .map(([key, value]) => `${key}: ${String(value)}`);
+  return entries.length > 0 ? entries.join(' · ') : null;
 }
 
 function Avatar({ user, size = 34, sessionToken }: { user: AppUserProfile; size?: number; sessionToken?: string }) {
@@ -291,6 +329,8 @@ type MessageMenuPosition = {
   maxHeight: number;
 };
 
+type GroupOverviewTab = 'overview' | 'finder' | 'admin';
+
 function resolveMessageMenuPosition(
   anchorRect: Pick<DOMRect, 'top' | 'bottom' | 'left' | 'right'>,
   menuWidth: number,
@@ -349,6 +389,12 @@ export default function ChatPage() {
   const [groupMemberIds, setGroupMemberIds] = useState<string[]>([]);
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [showGroupManageModal, setShowGroupManageModal] = useState(false);
+  const [groupOverviewTab, setGroupOverviewTab] = useState<GroupOverviewTab>('overview');
+  const [finderQuery, setFinderQuery] = useState('');
+  const [messageSearchQuery, setMessageSearchQuery] = useState('');
+  const [messageSenderFilter, setMessageSenderFilter] = useState('all');
+  const [showPinnedOnly, setShowPinnedOnly] = useState(false);
+  const [moderationLogs, setModerationLogs] = useState<AppModerationLog[]>([]);
   const [groupInviteModeDraft, setGroupInviteModeDraft] = useState<GroupInviteMode>('direct');
   const [groupInvitePolicyDraft, setGroupInvitePolicyDraft] = useState<GroupInvitePolicy>('admins');
   const [groupEveryoneMentionPolicyDraft, setGroupEveryoneMentionPolicyDraft] = useState<GroupMentionPolicy>('admins');
@@ -483,6 +529,94 @@ export default function ChatPage() {
   }, [context, groupSettings?.canUseEveryoneMention, groupSettings?.canUseHereMention, me, members, mentionDraft]);
   const mentionMenuVisible = composerFocused && Boolean(mentionDraft) && mentionSuggestions.length > 0;
   const activeMentionSuggestion = mentionMenuVisible ? mentionSuggestions[mentionActiveIndex] : null;
+  const groupLinks = useMemo(() => {
+    return messages
+      .flatMap((message) =>
+        extractLinks(message.text).map((url) => ({
+          url,
+          messageId: message.id,
+          author: message.user.fullName,
+          createdAt: message.createdAt
+        }))
+      )
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }, [messages]);
+  const groupImages = useMemo(() => {
+    return messages
+      .flatMap((message) =>
+        message.attachments
+          .filter((attachment) => isImageAttachment(attachment.mimeType))
+          .map((attachment) => ({
+            attachment,
+            messageId: message.id,
+            author: message.user.fullName,
+            createdAt: message.createdAt
+          }))
+      )
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }, [messages]);
+  const groupFiles = useMemo(() => {
+    return messages
+      .flatMap((message) =>
+        message.attachments
+          .filter((attachment) => !isImageAttachment(attachment.mimeType))
+          .map((attachment) => ({
+            attachment,
+            messageId: message.id,
+            author: message.user.fullName,
+            createdAt: message.createdAt
+          }))
+      )
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }, [messages]);
+  const normalizedFinderQuery = finderQuery.trim().toLowerCase();
+  const visibleLinks = useMemo(() => {
+    if (!normalizedFinderQuery) {
+      return groupLinks;
+    }
+    return groupLinks.filter(
+      (item) =>
+        item.url.toLowerCase().includes(normalizedFinderQuery) || item.author.toLowerCase().includes(normalizedFinderQuery)
+    );
+  }, [groupLinks, normalizedFinderQuery]);
+  const visibleImages = useMemo(() => {
+    if (!normalizedFinderQuery) {
+      return groupImages;
+    }
+    return groupImages.filter(
+      (item) =>
+        item.attachment.fileName.toLowerCase().includes(normalizedFinderQuery) || item.author.toLowerCase().includes(normalizedFinderQuery)
+    );
+  }, [groupImages, normalizedFinderQuery]);
+  const visibleFiles = useMemo(() => {
+    if (!normalizedFinderQuery) {
+      return groupFiles;
+    }
+    return groupFiles.filter(
+      (item) =>
+        item.attachment.fileName.toLowerCase().includes(normalizedFinderQuery) || item.author.toLowerCase().includes(normalizedFinderQuery)
+    );
+  }, [groupFiles, normalizedFinderQuery]);
+  const normalizedMessageSearchQuery = messageSearchQuery.trim().toLowerCase();
+  const pinnedMessages = useMemo(
+    () => messages.filter((message) => message.isPinned).sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0)),
+    [messages]
+  );
+  const filteredMessages = useMemo(() => {
+    return messages.filter((message) => {
+      if (showPinnedOnly && !message.isPinned) {
+        return false;
+      }
+      if (messageSenderFilter !== 'all' && message.user.id !== messageSenderFilter) {
+        return false;
+      }
+      if (!normalizedMessageSearchQuery) {
+        return true;
+      }
+      const haystack = `${message.text} ${message.user.fullName} ${message.user.username} ${message.attachments.map((item) => item.fileName).join(' ')}`.toLowerCase();
+      return haystack.includes(normalizedMessageSearchQuery);
+    });
+  }, [messages, messageSearchQuery, messageSenderFilter, showPinnedOnly, normalizedMessageSearchQuery]);
 
   useEffect(() => {
     const stored = localStorage.getItem(TOKEN_KEY) ?? '';
@@ -742,6 +876,13 @@ export default function ChatPage() {
     }
     setMentionActiveIndex((prev) => Math.max(0, Math.min(prev, mentionSuggestions.length - 1)));
   }, [mentionMenuVisible, mentionSuggestions.length]);
+
+  useEffect(() => {
+    if (!showGroupManageModal || groupOverviewTab !== 'admin') {
+      return;
+    }
+    void loadModerationLogs();
+  }, [showGroupManageModal, groupOverviewTab, activeChatId, token]);
 
   useEffect(() => {
     if (!actionMenuMessageId || !actionMenuAnchorElement || !actionMenuRef.current) {
@@ -1034,6 +1175,17 @@ export default function ChatPage() {
     });
   };
 
+  const jumpToMessageFromModeration = (messageId: string) => {
+    setShowGroupManageModal(false);
+    window.setTimeout(() => {
+      const target = document.getElementById(`chat-msg-${messageId}`);
+      target?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center'
+      });
+    }, 120);
+  };
+
   const patchMessage = (next: AppChatMessage) => {
     setMessages((prev) => prev.map((item) => (item.id === next.id ? next : item)));
   };
@@ -1178,6 +1330,35 @@ export default function ChatPage() {
       return true;
     }
     return context?.chat.kind === 'group' && context.chat.memberRole === 'owner';
+  };
+
+  const canPinMessage = (): boolean => {
+    if (!me) {
+      return false;
+    }
+    if (me.role === 'superadmin') {
+      return true;
+    }
+    if (context?.chat.kind !== 'group') {
+      return false;
+    }
+    return context.chat.memberRole === 'owner' || context.chat.memberRole === 'admin';
+  };
+
+  const togglePinMessage = async (messageId: string) => {
+    if (!token || !activeChatId || !canPinMessage()) {
+      return;
+    }
+    try {
+      const payload = (await api('/api/app/chats/pin', token, {
+        method: 'POST',
+        body: JSON.stringify({ chatId: activeChatId, messageId })
+      })) as { message: AppChatMessage };
+      patchMessage(payload.message);
+      setActionMenuMessageId(null);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Pin fehlgeschlagen.');
+    }
   };
 
   const openMenuForMessage = (messageId: string, triggerElement: HTMLElement) => {
@@ -1465,7 +1646,24 @@ export default function ChatPage() {
     setGroupHereMentionPolicyDraft(groupSettings.hereMentionPolicy);
     setGroupAutoHide24hDraft(groupSettings.autoHideAfter24h);
     setOwnershipTargetUserId('');
+    setFinderQuery('');
+    setGroupOverviewTab('overview');
     setShowGroupManageModal(true);
+    void loadModerationLogs();
+  };
+
+  const loadModerationLogs = async () => {
+    if (!token || !activeChatId) {
+      return;
+    }
+    try {
+      const payload = (await api(`/api/app/chats/moderation?chatId=${encodeURIComponent(activeChatId)}&limit=120`, token)) as {
+        logs: AppModerationLog[];
+      };
+      setModerationLogs(payload.logs);
+    } catch {
+      setModerationLogs([]);
+    }
   };
 
   const saveGroupSettings = async () => {
@@ -1878,7 +2076,13 @@ export default function ChatPage() {
         >
           <header className="chat-header">
             <div className="min-w-0">
-              <h1 className="truncate text-lg font-semibold text-slate-50">{activeChat?.name ?? context?.chat.name ?? 'Chat'}</h1>
+              {context?.chat.kind === 'group' ? (
+                <button className="truncate text-left text-lg font-semibold text-slate-50 underline-offset-2 hover:underline" onClick={openGroupManagementModal}>
+                  {activeChat?.name ?? context?.chat.name ?? 'Chat'}
+                </button>
+              ) : (
+                <h1 className="truncate text-lg font-semibold text-slate-50">{activeChat?.name ?? context?.chat.name ?? 'Chat'}</h1>
+              )}
               <p className="surface-muted text-xs uppercase tracking-wide">
                 {activeChat?.kind ?? context?.chat.kind ?? 'chat'} · {members.length} Mitglieder · {onlineMembersCount} online
               </p>
@@ -1891,7 +2095,7 @@ export default function ChatPage() {
               ) : null}
               {context?.chat.kind === 'group' ? (
                 <button className="btn-soft px-2 py-1 text-xs" onClick={openGroupManagementModal}>
-                  Gruppenverwaltung
+                  Overview & Settings
                 </button>
               ) : null}
             </div>
@@ -1913,8 +2117,32 @@ export default function ChatPage() {
             ) : null}
           </AnimatePresence>
 
+          <div className="px-3 pb-2">
+            <div className="glass-card rounded-lg p-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  className="glass-input min-w-[12rem] flex-1 text-xs"
+                  placeholder="Nachrichten durchsuchen..."
+                  value={messageSearchQuery}
+                  onChange={(event) => setMessageSearchQuery(event.target.value)}
+                />
+                <select className="glass-input text-xs" value={messageSenderFilter} onChange={(event) => setMessageSenderFilter(event.target.value)}>
+                  <option value="all">Alle Sender</option>
+                  {members.map((member) => (
+                    <option key={member.user.id} value={member.user.id}>
+                      {member.user.fullName}
+                    </option>
+                  ))}
+                </select>
+                <button className={`btn-soft px-2 py-1 text-xs ${showPinnedOnly ? 'border-indigo-400/70 text-indigo-100' : ''}`} type="button" onClick={() => setShowPinnedOnly((prev) => !prev)}>
+                  Nur Pinned
+                </button>
+              </div>
+            </div>
+          </div>
+
           <motion.div className="message-list" onClick={() => setActionMenuMessageId(null)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3, delay: 0.2 }}>
-            {messages.map((message) => {
+            {filteredMessages.map((message) => {
               const isMe = message.user.id === me.id;
               const isUnreadStart = firstUnreadMessageId === message.id && unreadCountAtOpen > 0;
               const canEdit = isMe && !message.deletedForAll;
@@ -1936,7 +2164,7 @@ export default function ChatPage() {
                 );
 
               return (
-                <motion.div key={message.id} initial={{ opacity: 0, y: 10, scale: 0.992 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.25 }}>
+                <motion.div id={`chat-msg-${message.id}`} key={message.id} initial={{ opacity: 0, y: 10, scale: 0.992 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.25 }}>
                   {isUnreadStart ? (
                     <div ref={firstUnreadRef} className="unread-separator">
                       <span>Ungelesene Nachrichten ({unreadCountAtOpen})</span>
@@ -1952,6 +2180,7 @@ export default function ChatPage() {
                           </span>
                         </button>
                         <div className="flex items-center gap-1.5">
+                          {message.isPinned ? <span className="surface-muted text-[11px]">📌</span> : null}
                           <time className={`text-[11px] ${isMe ? 'text-indigo-100/80' : 'text-slate-400'}`}>
                             {formatTime(message.createdAt)}
                             {message.editedAt ? ' · bearbeitet' : ''}
@@ -1998,6 +2227,11 @@ export default function ChatPage() {
                                     <button className="message-menu-item" onClick={() => replyToMessage(message)}>
                                       Antworten
                                     </button>
+                                    {canPinMessage() ? (
+                                      <button className="message-menu-item" onClick={() => void togglePinMessage(message.id)}>
+                                        {message.isPinned ? 'Unpin' : 'Pin'}
+                                      </button>
+                                    ) : null}
                                     {canEdit ? (
                                       <button className="message-menu-item" onClick={() => startEditMessage(message)}>
                                         Bearbeiten
@@ -2109,7 +2343,7 @@ export default function ChatPage() {
               );
             })}
 
-            {messages.length === 0 ? <p className="surface-muted text-sm">Noch keine Nachrichten.</p> : null}
+            {filteredMessages.length === 0 ? <p className="surface-muted text-sm">Keine Nachrichten fuer diesen Filter.</p> : null}
             <div ref={bottomRef} />
           </motion.div>
 
@@ -2369,10 +2603,176 @@ export default function ChatPage() {
       {showGroupManageModal && context?.chat.kind === 'group' && groupSettings ? (
         <motion.div className="modal-overlay" onClick={() => setShowGroupManageModal(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
           <motion.div className="modal-card" onClick={(event) => event.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}>
-            <h2 className="text-lg font-semibold text-slate-100">Gruppenverwaltung</h2>
+            <h2 className="text-lg font-semibold text-slate-100">Group Overview & Settings</h2>
             <p className="surface-muted mt-1 text-xs">
-              Rollen, Invite-Policy, Ownership und Gruppenstatus professionell verwalten.
+              WhatsApp/Discord-style Uebersicht mit Schnellfinder fuer Links, Medien und Dateien.
             </p>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                className={`btn-soft px-2 py-1 text-xs ${groupOverviewTab === 'overview' ? 'border-indigo-400/70 text-indigo-100' : ''}`}
+                type="button"
+                onClick={() => setGroupOverviewTab('overview')}
+              >
+                Overview
+              </button>
+              <button
+                className={`btn-soft px-2 py-1 text-xs ${groupOverviewTab === 'finder' ? 'border-indigo-400/70 text-indigo-100' : ''}`}
+                type="button"
+                onClick={() => setGroupOverviewTab('finder')}
+              >
+                Links & Media Finder
+              </button>
+              {(groupSettings.canManageUsers || groupSettings.canManageSettings || groupSettings.canTransferOwnership || groupSettings.canCloseGroup) ? (
+                <button
+                  className={`btn-soft px-2 py-1 text-xs ${groupOverviewTab === 'admin' ? 'border-indigo-400/70 text-indigo-100' : ''}`}
+                  type="button"
+                  onClick={() => setGroupOverviewTab('admin')}
+                >
+                  Admin
+                </button>
+              ) : null}
+            </div>
+
+            {groupOverviewTab === 'overview' ? (
+              <section className="mt-4 space-y-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-3">
+                    <p className="surface-muted text-[11px] uppercase tracking-wide">Mitglieder</p>
+                    <p className="mt-1 text-xl font-semibold text-slate-100">{members.length}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-3">
+                    <p className="surface-muted text-[11px] uppercase tracking-wide">Online</p>
+                    <p className="mt-1 text-xl font-semibold text-emerald-300">{onlineMembersCount}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-3">
+                    <p className="surface-muted text-[11px] uppercase tracking-wide">Medien</p>
+                    <p className="mt-1 text-xl font-semibold text-slate-100">{groupImages.length}</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-3">
+                    <p className="surface-muted text-[11px] uppercase tracking-wide">Links</p>
+                    <p className="mt-1 text-xl font-semibold text-slate-100">{groupLinks.length}</p>
+                  </div>
+                </div>
+                <div className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-3">
+                  <p className="surface-muted text-[11px] uppercase tracking-wide">Erstellt</p>
+                  <p className="mt-1 text-sm text-slate-100">{new Date(context.chat.createdAt).toLocaleString()}</p>
+                </div>
+                {groupSettings.inviteCode ? (
+                  <div className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-3">
+                    <p className="surface-muted text-[11px] uppercase tracking-wide">Invite-Link</p>
+                    <p className="mt-1 break-all text-xs text-slate-100">{`${appOrigin}/chat?inviteCode=${encodeURIComponent(groupSettings.inviteCode)}`}</p>
+                    <button className="btn-soft mt-2 px-2 py-1 text-xs" type="button" onClick={() => void copyInviteLink(groupSettings)}>
+                      Link kopieren
+                    </button>
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
+            {groupOverviewTab === 'finder' ? (
+              <section className="mt-4">
+                <input
+                  className="glass-input text-sm"
+                  placeholder="Suche nach Link, Datei oder Name..."
+                  value={finderQuery}
+                  onChange={(event) => setFinderQuery(event.target.value)}
+                />
+                <div className="mt-3 space-y-4">
+                  <div>
+                    <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Links ({visibleLinks.length})</h3>
+                    <ul className="mt-2 max-h-40 space-y-1.5 overflow-y-auto">
+                      {visibleLinks.map((item) => (
+                        <li key={`${item.messageId}-${item.url}`} className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-2">
+                          <a href={item.url} target="_blank" rel="noreferrer" className="break-all text-xs text-cyan-200 underline">
+                            {item.url}
+                          </a>
+                          <p className="surface-muted mt-1 text-[11px]">{item.author} · {formatTime(item.createdAt)}</p>
+                        </li>
+                      ))}
+                      {visibleLinks.length === 0 ? <li className="surface-muted text-xs">Keine Links gefunden.</li> : null}
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Bilder ({visibleImages.length})</h3>
+                    <div className="mt-2 grid max-h-48 grid-cols-3 gap-2 overflow-y-auto pr-1">
+                      {visibleImages.map((item) => (
+                        <a key={`${item.messageId}-${item.attachment.id}`} href={uploadUrl(item.attachment.id, token)} target="_blank" rel="noreferrer">
+                          <img
+                            src={uploadUrl(item.attachment.id, token)}
+                            alt={item.attachment.fileName}
+                            className="h-20 w-full rounded-md border border-slate-700/70 object-cover"
+                          />
+                        </a>
+                      ))}
+                      {visibleImages.length === 0 ? <p className="surface-muted col-span-3 text-xs">Keine Bilder gefunden.</p> : null}
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Dateien ({visibleFiles.length})</h3>
+                    <ul className="mt-2 max-h-40 space-y-1.5 overflow-y-auto">
+                      {visibleFiles.map((item) => (
+                        <li key={`${item.messageId}-${item.attachment.id}`} className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-2">
+                          <a href={uploadUrl(item.attachment.id, token)} target="_blank" rel="noreferrer" className="text-xs text-cyan-200 underline">
+                            {item.attachment.fileName}
+                          </a>
+                          <p className="surface-muted mt-1 text-[11px]">
+                            {Math.ceil(item.attachment.size / 1024)} KB · {item.author} · {formatTime(item.createdAt)}
+                          </p>
+                        </li>
+                      ))}
+                      {visibleFiles.length === 0 ? <li className="surface-muted text-xs">Keine Dateien gefunden.</li> : null}
+                    </ul>
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
+            {groupOverviewTab === 'admin' ? (
+            <>
+            <section className="mt-4">
+              <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Pinned Messages</h3>
+              <ul className="mt-2 max-h-44 space-y-1.5 overflow-y-auto">
+                {pinnedMessages.map((message) => (
+                  <li key={`pinned-${message.id}`} className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-2">
+                    <p className="truncate text-xs text-slate-100">{message.text || '[Anhang / Medien]'}</p>
+                    <p className="surface-muted mt-1 text-[11px]">
+                      {message.user.fullName} · {message.pinnedAt ? new Date(message.pinnedAt).toLocaleString() : formatTime(message.createdAt)}
+                    </p>
+                  </li>
+                ))}
+                {pinnedMessages.length === 0 ? <li className="surface-muted text-xs">Keine angepinnten Nachrichten.</li> : null}
+              </ul>
+            </section>
+
+            <section className="mt-4">
+              <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Moderation Log</h3>
+              <ul className="mt-2 max-h-44 space-y-1.5 overflow-y-auto">
+                {moderationLogs.map((event) => (
+                  (() => {
+                    const eventMessageId = event.messageId;
+                    return (
+                  <li key={event.id} className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-2">
+                    <p className="text-xs text-slate-100">
+                      {event.actorName} · {moderationActionLabel(event.action)}
+                      {event.targetName ? ` · ${event.targetName}` : ''}
+                    </p>
+                    {moderationDetailsLabel(event.details) ? (
+                      <p className="surface-muted mt-1 text-[11px]">{moderationDetailsLabel(event.details)}</p>
+                    ) : null}
+                    <p className="surface-muted mt-1 text-[11px]">{new Date(event.createdAt).toLocaleString()}</p>
+                    {eventMessageId ? (
+                      <button className="btn-soft mt-2 px-2 py-1 text-[11px]" type="button" onClick={() => jumpToMessageFromModeration(eventMessageId)}>
+                        Zur Nachricht springen
+                      </button>
+                    ) : null}
+                  </li>
+                    );
+                  })()
+                ))}
+                {moderationLogs.length === 0 ? <li className="surface-muted text-xs">Noch keine Moderationsereignisse.</li> : null}
+              </ul>
+            </section>
 
             <section className="mt-4">
               <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">User verwalten</h3>
@@ -2558,6 +2958,8 @@ export default function ChatPage() {
                   Gruppe dauerhaft deaktivieren
                 </button>
               </section>
+            ) : null}
+            </>
             ) : null}
 
             <button className="btn-soft mt-4 w-full" type="button" onClick={() => setShowGroupManageModal(false)}>

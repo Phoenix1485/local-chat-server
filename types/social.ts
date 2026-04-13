@@ -74,6 +74,9 @@ export type AppChatMessage = {
   gif: AppChatGif | null;
   poll: AppChatPoll | null;
   reactions: AppChatReaction[];
+  isPinned: boolean;
+  pinnedAt: number | null;
+  pinnedBy: string | null;
   mentionedMe: boolean;
   readBy: AppChatReadReceipt[];
 };
@@ -133,6 +136,19 @@ export type AppChatContext = {
   unreadCountAtOpen: number;
   firstUnreadMessageId: string | null;
   groupSettings: AppGroupSettings | null;
+};
+
+export type AppModerationLog = {
+  id: string;
+  chatId: string;
+  action: string;
+  actorUserId: string;
+  actorName: string;
+  targetUserId: string | null;
+  targetName: string | null;
+  messageId: string | null;
+  details: Record<string, unknown> | null;
+  createdAt: number;
 };
 
 export type AppGroupSettings = {

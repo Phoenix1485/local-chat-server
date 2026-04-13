@@ -14,8 +14,8 @@
     "jsx": "preserve",
     "incremental": true,
     "plugins": [{ "name": "next" }],
-    "baseUrl": ".",
     "paths": {
+      "*": ["./*"],
       "@/*": ["./*"],
       "framer-motion": ["./lib/motion-lite"]
     }

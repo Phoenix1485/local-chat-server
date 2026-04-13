@@ -15,6 +15,7 @@ import type {
   AppChatPoll,
   AppChatReaction,
   AppChatSummary,
+  AppModerationLog,
   AppUserProfile,
   FriendRequestItem,
   GlobalRole,
@@ -137,6 +138,23 @@ type FriendProfileRow = RowDataPacket & {
   avatar_updated_at: number | null;
 };
 
+type GroupModerationLogRow = RowDataPacket & {
+  id: string;
+  chat_id: string;
+  action: string;
+  actor_user_id: string;
+  actor_username: string;
+  actor_first_name: string;
+  actor_last_name: string;
+  target_user_id: string | null;
+  target_username: string | null;
+  target_first_name: string | null;
+  target_last_name: string | null;
+  message_id: string | null;
+  details_json: string | null;
+  created_at: number;
+};
+
 type FriendRequestRow = RowDataPacket & {
   id: string;
   sender_id: string;
@@ -204,6 +222,10 @@ type StoredMessageMeta = {
   hiddenForUserIds?: string[];
   editedAt?: number | null;
   deletedForAll?: {
+    by: string;
+    at: number;
+  } | null;
+  pinned?: {
     by: string;
     at: number;
   } | null;
@@ -532,6 +554,7 @@ function buildMessage(row: MessageRow, viewerUserId: string, readBy: AppChatRead
     return null;
   }
   const deletedForAll = Boolean(meta.deletedForAll);
+  const pinned = meta.pinned ?? null;
   const userProfile = mapProfile(row);
   return {
     id: row.id,
@@ -552,6 +575,9 @@ function buildMessage(row: MessageRow, viewerUserId: string, readBy: AppChatRead
     gif: deletedForAll ? null : meta.gif ?? null,
     poll: deletedForAll ? null : buildPoll(meta, viewerUserId),
     reactions: deletedForAll ? [] : buildReactions(meta, viewerUserId),
+    isPinned: Boolean(pinned),
+    pinnedAt: pinned?.at ?? null,
+    pinnedBy: pinned?.by ?? null,
     mentionedMe: !deletedForAll && (meta.mentionUserIds ?? []).includes(viewerUserId),
     readBy: deletedForAll ? [] : readBy
   };
@@ -1208,7 +1234,6 @@ export class SocialStore {
         now
       ]
     );
-
     await this.ensureGlobalMembership(userId, now);
 
     return this.createSession(userId, input.userAgent);
@@ -2019,6 +2044,10 @@ export class SocialStore {
         [chatId, targetUserId, now]
       );
       await pool.query<ResultSetHeader>('UPDATE chats SET updated_at = ? WHERE id = ?', [now, chatId]);
+      await this.appendGroupModerationLog(chatId, 'member_invited', userId, {
+        targetUserId,
+        details: { mode: 'direct' }
+      });
       return;
     }
 
@@ -2051,6 +2080,9 @@ export class SocialStore {
         ['admin', chatId, targetUserId]
       );
       await pool.query<ResultSetHeader>('UPDATE chats SET updated_at = ? WHERE id = ?', [now, chatId]);
+      await this.appendGroupModerationLog(chatId, 'member_promoted', userId, {
+        targetUserId
+      });
       return;
     }
 
@@ -2066,6 +2098,9 @@ export class SocialStore {
         ['member', chatId, targetUserId]
       );
       await pool.query<ResultSetHeader>('UPDATE chats SET updated_at = ? WHERE id = ?', [now, chatId]);
+      await this.appendGroupModerationLog(chatId, 'member_demoted', userId, {
+        targetUserId
+      });
       return;
     }
 
@@ -2078,6 +2113,9 @@ export class SocialStore {
         [now, chatId, targetUserId]
       );
       await pool.query<ResultSetHeader>('UPDATE chats SET updated_at = ? WHERE id = ?', [now, chatId]);
+      await this.appendGroupModerationLog(chatId, 'member_kicked', userId, {
+        targetUserId
+      });
       return;
     }
 
@@ -2104,6 +2142,9 @@ export class SocialStore {
         'UPDATE chats SET created_by = ?, updated_at = ? WHERE id = ?',
         [targetUserId, now, chatId]
       );
+      await this.appendGroupModerationLog(chatId, 'ownership_transferred', userId, {
+        targetUserId
+      });
       return;
     }
 
@@ -2173,6 +2214,15 @@ export class SocialStore {
         chatId
       ]
     );
+    await this.appendGroupModerationLog(chatId, 'settings_updated', userId, {
+      details: {
+        inviteMode,
+        invitePolicy,
+        everyoneMentionPolicy,
+        hereMentionPolicy,
+        autoHideAfter24h: input.autoHideAfter24h
+      }
+    });
 
     const updated = await this.getGroupChatControl(chatId);
     if (!updated) {
@@ -2216,6 +2266,7 @@ export class SocialStore {
     if (!updated) {
       throw new Error('Invite link could not be regenerated.');
     }
+    await this.appendGroupModerationLog(chatId, 'invite_link_regenerated', userId);
 
     const next = await this.getGroupChatControl(chatId);
     if (!next) {
@@ -2242,6 +2293,79 @@ export class SocialStore {
       'UPDATE chats SET deactivated_at = ?, deactivated_by = ?, updated_at = ? WHERE id = ?',
       [now, userId, now, chatId]
     );
+    await this.appendGroupModerationLog(chatId, 'group_closed', userId);
+  }
+
+  async listGroupModerationLogs(userId: string, chatId: string, limit = 80): Promise<AppModerationLog[]> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const chat = await this.getGroupChatControl(chatId);
+    if (!chat?.id || chat.chat_type !== 'group') {
+      throw new Error('Only group chats are supported.');
+    }
+
+    const membershipRole = await this.getMembershipRole(userId, chatId);
+    const account = await this.getAccountByUserId(userId);
+    const canView = membershipRole === 'owner' || membershipRole === 'admin' || account?.global_role === 'superadmin';
+    if (!canView) {
+      throw new Error('Insufficient group permissions.');
+    }
+
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
+    const [rows] = await pool.query<GroupModerationLogRow[]>(
+      `
+        SELECT
+          l.id,
+          l.chat_id,
+          l.action,
+          l.actor_user_id,
+          aa.username AS actor_username,
+          aa.first_name AS actor_first_name,
+          aa.last_name AS actor_last_name,
+          l.target_user_id,
+          ta.username AS target_username,
+          ta.first_name AS target_first_name,
+          ta.last_name AS target_last_name,
+          l.message_id,
+          l.details_json,
+          l.created_at
+        FROM group_moderation_logs l
+        JOIN auth_accounts aa ON aa.user_id = l.actor_user_id
+        LEFT JOIN auth_accounts ta ON ta.user_id = l.target_user_id
+        WHERE l.chat_id = ?
+        ORDER BY l.created_at DESC
+        LIMIT ?
+      `,
+      [chatId, safeLimit]
+    );
+
+    return rows.map((row) => {
+      let details: Record<string, unknown> | null = null;
+      if (row.details_json) {
+        try {
+          const parsed = JSON.parse(row.details_json) as unknown;
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            details = parsed as Record<string, unknown>;
+          }
+        } catch {
+          details = null;
+        }
+      }
+      const actorName = `${row.actor_first_name ?? ''} ${row.actor_last_name ?? ''}`.trim() || row.actor_username;
+      const targetNameRaw = `${row.target_first_name ?? ''} ${row.target_last_name ?? ''}`.trim();
+      return {
+        id: row.id,
+        chatId: row.chat_id,
+        action: row.action,
+        actorUserId: row.actor_user_id,
+        actorName,
+        targetUserId: row.target_user_id ?? null,
+        targetName: row.target_user_id ? (targetNameRaw || row.target_username || null) : null,
+        messageId: row.message_id ?? null,
+        details,
+        createdAt: asNumber(row.created_at)
+      };
+    });
   }
 
   async joinGroupByInviteCode(userId: string, inviteCode: string): Promise<AppChatSummary> {
@@ -2837,6 +2961,48 @@ export class SocialStore {
     return role === 'owner';
   }
 
+  private async canPinMessage(actorUserId: string, chatId: string): Promise<boolean> {
+    const actor = await this.getAccountByUserId(actorUserId);
+    if (actor?.global_role === 'superadmin') {
+      return true;
+    }
+    const role = await this.getMembershipRole(actorUserId, chatId);
+    return role === 'owner' || role === 'admin';
+  }
+
+  private async appendGroupModerationLog(
+    chatId: string,
+    action: string,
+    actorUserId: string,
+    options?: {
+      targetUserId?: string | null;
+      messageId?: string | null;
+      details?: Record<string, unknown> | null;
+    }
+  ): Promise<void> {
+    const chat = await this.getGroupChatControl(chatId);
+    if (!chat?.id || chat.chat_type !== 'group') {
+      return;
+    }
+    const pool = getMysqlPool();
+    await pool.query<ResultSetHeader>(
+      `
+        INSERT INTO group_moderation_logs (id, chat_id, action, actor_user_id, target_user_id, message_id, details_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        randomUUID(),
+        chatId,
+        action.slice(0, 64),
+        actorUserId,
+        options?.targetUserId ?? null,
+        options?.messageId ?? null,
+        options?.details ? JSON.stringify(options.details) : null,
+        Date.now()
+      ]
+    );
+  }
+
   async editMessage(userId: string, chatId: string, messageId: string, text: string): Promise<AppChatMessage> {
     await this.ensureReady();
     const pool = getMysqlPool();
@@ -2865,6 +3031,9 @@ export class SocialStore {
       messageId,
       chatId
     ]);
+    await this.appendGroupModerationLog(chatId, 'message_edited', userId, {
+      messageId
+    });
 
     const next = await this.loadMessageRow(chatId, messageId);
     if (!next) {
@@ -2917,6 +3086,10 @@ export class SocialStore {
         messageId,
         chatId
       ]);
+      await this.appendGroupModerationLog(chatId, 'message_deleted_for_all', userId, {
+        targetUserId: row.user_id,
+        messageId
+      });
 
       const next = await this.loadMessageRow(chatId, messageId);
       if (!next) {
@@ -2974,6 +3147,10 @@ export class SocialStore {
       messageId,
       chatId
     ]);
+    await this.appendGroupModerationLog(chatId, meta.pinned ? 'message_pinned' : 'message_unpinned', userId, {
+      targetUserId: row.user_id,
+      messageId
+    });
 
     const next = await this.loadMessageRow(chatId, messageId);
     if (!next) {
@@ -3021,6 +3198,54 @@ export class SocialStore {
       reactions[key] = [...voters];
     }
     meta.reactions = reactions;
+
+    await pool.query<ResultSetHeader>('UPDATE messages SET attachments_json = ? WHERE id = ? AND chat_id = ?', [
+      JSON.stringify(meta),
+      messageId,
+      chatId
+    ]);
+
+    const next = await this.loadMessageRow(chatId, messageId);
+    if (!next) {
+      throw new Error('Message not found.');
+    }
+    const message = await this.mapRowToMessage(next, userId);
+    if (!message) {
+      throw new Error('Message not available.');
+    }
+    return message;
+  }
+
+  async togglePinMessage(userId: string, chatId: string, messageId: string): Promise<AppChatMessage> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const role = await this.getMembershipRole(userId, chatId);
+    if (!role) {
+      throw new Error('Chat not accessible.');
+    }
+
+    const canPin = await this.canPinMessage(userId, chatId);
+    if (!canPin) {
+      throw new Error('No permission to pin messages.');
+    }
+
+    const row = await this.loadMessageRow(chatId, messageId);
+    if (!row) {
+      throw new Error('Message not found.');
+    }
+
+    const meta = parseMessageMeta(row.attachments_json);
+    if (meta.deletedForAll) {
+      throw new Error('Message already deleted.');
+    }
+    if (meta.pinned) {
+      meta.pinned = null;
+    } else {
+      meta.pinned = {
+        by: userId,
+        at: Date.now()
+      };
+    }
 
     await pool.query<ResultSetHeader>('UPDATE messages SET attachments_json = ? WHERE id = ? AND chat_id = ?', [
       JSON.stringify(meta),

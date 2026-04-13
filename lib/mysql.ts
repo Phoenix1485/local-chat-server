@@ -223,6 +223,25 @@ async function createSchema(): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS group_moderation_logs (
+      id CHAR(36) PRIMARY KEY,
+      chat_id CHAR(36) NOT NULL,
+      action VARCHAR(64) NOT NULL,
+      actor_user_id CHAR(36) NOT NULL,
+      target_user_id CHAR(36) NULL,
+      message_id CHAR(36) NULL,
+      details_json LONGTEXT NULL,
+      created_at BIGINT NOT NULL,
+      INDEX idx_group_moderation_logs_chat_created (chat_id, created_at),
+      INDEX idx_group_moderation_logs_actor (actor_user_id, created_at),
+      INDEX idx_group_moderation_logs_target (target_user_id, created_at),
+      CONSTRAINT fk_group_moderation_logs_chat FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+      CONSTRAINT fk_group_moderation_logs_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_group_moderation_logs_target FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS rate_limits (
       rate_key VARCHAR(191) PRIMARY KEY,
       count INT NOT NULL,
