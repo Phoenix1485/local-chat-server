@@ -2,7 +2,7 @@
 'use client';
 
 import Link from 'next/link';
-import { FormEvent, KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { createPortal } from 'react-dom';
@@ -86,7 +86,7 @@ const EMOJI_CATEGORIES: Array<{ key: string; label: string; emojis: string[] }> 
   },
   {
     key: 'activities',
-    label: 'Aktivitaeten',
+    label: 'Aktivitäten',
     emojis: ['⚽', '🏀', '🏈', '⚾', '🎾', '🏐', '🥎', '🎱', '🏓', '🏸', '🥊', '🏆', '🎮', '🕹️', '🎲', '♟️', '🎯', '🎳', '🎸', '🎹', '🥁', '🎷', '🎺', '🎻', '🎤', '🎧', '🎬', '🎨', '🧩', '🚴', '🏊', '🧗']
   },
   {
@@ -189,10 +189,27 @@ function getActiveMentionDraft(text: string): { startIndex: number; query: strin
   return { startIndex, query: query.trimStart() };
 }
 
+function extractMentionTokens(text: string): Array<{ value: string; start: number; end: number }> {
+  const out: Array<{ value: string; start: number; end: number }> = [];
+  const regex = /(^|\s)@([A-Za-z0-9_.-]+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    const prefix = match[1] ?? '';
+    const mention = match[2] ?? '';
+    const atStart = match.index + prefix.length;
+    out.push({
+      value: `@${mention}`,
+      start: atStart,
+      end: atStart + mention.length + 1
+    });
+  }
+  return out;
+}
+
 function roleLabel(role: GlobalRole): string {
-  if (role === 'superadmin') return 'superadmin';
-  if (role === 'admin') return 'admin';
-  return 'user';
+  if (role === 'superadmin') return 'Superadmin';
+  if (role === 'admin') return 'Admin';
+  return 'Nutzer';
 }
 
 function roleBadgeClass(role: GlobalRole): string {
@@ -202,9 +219,9 @@ function roleBadgeClass(role: GlobalRole): string {
 }
 
 function groupRoleLabel(role: 'owner' | 'admin' | 'member'): string {
-  if (role === 'owner') return 'superadmin';
-  if (role === 'admin') return 'admin';
-  return 'user';
+  if (role === 'owner') return 'Superadmin';
+  if (role === 'admin') return 'Admin';
+  return 'Nutzer';
 }
 
 function invitePolicyLabel(policy: GroupInvitePolicy): string {
@@ -216,15 +233,15 @@ function invitePolicyLabel(policy: GroupInvitePolicy): string {
 function moderationActionLabel(action: string): string {
   const map: Record<string, string> = {
     member_invited: 'Mitglied eingeladen',
-    member_promoted: 'Mitglied befoerdert',
+    member_promoted: 'Mitglied befördert',
     member_demoted: 'Mitglied herabgestuft',
     member_kicked: 'Mitglied entfernt',
-    ownership_transferred: 'Ownership uebertragen',
-    settings_updated: 'Gruppeneinstellungen geaendert',
+    ownership_transferred: 'Besitz übertragen',
+    settings_updated: 'Gruppeneinstellungen geändert',
     invite_link_regenerated: 'Invite-Link neu generiert',
     group_closed: 'Gruppe geschlossen',
     message_edited: 'Nachricht bearbeitet',
-    message_deleted_for_all: 'Nachricht fuer alle geloescht',
+    message_deleted_for_all: 'Nachricht für alle gelöscht',
     message_pinned: 'Nachricht angepinnt',
     message_unpinned: 'Nachricht entpinnt'
   };
@@ -284,7 +301,7 @@ async function api(path: string, token: string, init?: RequestInit) {
   const contentType = response.headers.get('content-type') ?? '';
   const payload = contentType.includes('application/json') ? await response.json().catch(() => null) : null;
   if (!response.ok) {
-    const message = payload && typeof payload === 'object' && 'error' in payload ? String(payload.error) : 'Request failed.';
+    const message = payload && typeof payload === 'object' && 'error' in payload ? String(payload.error) : 'Anfrage fehlgeschlagen.';
     throw new Error(message);
   }
 
@@ -305,14 +322,14 @@ type TenorCategory = {
 };
 
 const BUILTIN_GIF_CATEGORIES: TenorCategory[] = [
-  { searchterm: 'funny', name: 'Funny', image: '' },
-  { searchterm: 'reactions', name: 'Reactions', image: '' },
+  { searchterm: 'funny', name: 'Lustig', image: '' },
+  { searchterm: 'reactions', name: 'Reaktionen', image: '' },
   { searchterm: 'memes', name: 'Memes', image: '' },
-  { searchterm: 'gaming', name: 'Gaming', image: '' },
+  { searchterm: 'gaming', name: 'Spiele', image: '' },
   { searchterm: 'anime', name: 'Anime', image: '' },
-  { searchterm: 'sports', name: 'Sports', image: '' },
-  { searchterm: 'animals', name: 'Animals', image: '' },
-  { searchterm: 'movies', name: 'Movies', image: '' }
+  { searchterm: 'sports', name: 'Sport', image: '' },
+  { searchterm: 'animals', name: 'Tiere', image: '' },
+  { searchterm: 'movies', name: 'Filme', image: '' }
 ];
 
 type MentionSuggestion = {
@@ -330,6 +347,17 @@ type MessageMenuPosition = {
 };
 
 type GroupOverviewTab = 'overview' | 'finder' | 'admin';
+
+type PendingSendPayload = {
+  clientId: string;
+  createdAt: number;
+  chatId: string;
+  text: string;
+  attachmentIds: string[];
+  replyToMessageId: string | null;
+  gif: AppChatGif | null;
+  poll: { question: string; options: string[] } | null;
+};
 
 function resolveMessageMenuPosition(
   anchorRect: Pick<DOMRect, 'top' | 'bottom' | 'left' | 'right'>,
@@ -416,6 +444,7 @@ export default function ChatPage() {
   const [savedGifResults, setSavedGifResults] = useState<TenorResult[]>([]);
   const [activeGifCategory, setActiveGifCategory] = useState('');
   const [showPollModal, setShowPollModal] = useState(false);
+  const [showShortcutModal, setShowShortcutModal] = useState(false);
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
   const [showEmojiPanel, setShowEmojiPanel] = useState(false);
@@ -429,6 +458,8 @@ export default function ChatPage() {
   const [deleteTarget, setDeleteTarget] = useState<AppChatMessage | null>(null);
   const [profileCard, setProfileCard] = useState<AppUserProfile | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [connectionState, setConnectionState] = useState<'online' | 'reconnecting' | 'offline'>('online');
+  const [pendingSendQueue, setPendingSendQueue] = useState<PendingSendPayload[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
   const [showMentionNotificationPrompt, setShowMentionNotificationPrompt] = useState(false);
@@ -444,6 +475,16 @@ export default function ChatPage() {
   const typingIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mentionAudioRef = useRef<AudioContext | null>(null);
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
+  const inviteCodeInputRef = useRef<HTMLInputElement | null>(null);
+  const messageSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const composerInputRef = useRef<HTMLInputElement | null>(null);
+  const groupManageModalRef = useRef<HTMLDivElement | null>(null);
+  const groupCreateModalRef = useRef<HTMLDivElement | null>(null);
+  const gifModalRef = useRef<HTMLDivElement | null>(null);
+  const pollModalRef = useRef<HTMLDivElement | null>(null);
+  const shortcutModalRef = useRef<HTMLDivElement | null>(null);
+  const deleteModalRef = useRef<HTMLDivElement | null>(null);
+  const profileModalRef = useRef<HTMLDivElement | null>(null);
 
   const activeChatId = bootstrap?.activeChatId ?? null;
   const chats = bootstrap?.chats ?? [];
@@ -521,7 +562,7 @@ export default function ChatPage() {
         id: `user-${member.user.id}`,
         value: member.user.fullName.trim() || member.user.username,
         label: member.user.fullName,
-        subtitle: `@${member.user.username}${member.isOnline ? ' · online' : ''}`,
+        subtitle: `@${member.user.username}${member.isOnline ? ' · online' : ' · offline'}`,
         disabled: false
       }));
 
@@ -641,6 +682,89 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => {
+    const hasAnyModalOpen = Boolean(showGroupManageModal || showGroupModal || showGifModal || showPollModal || showShortcutModal || deleteTarget || profileCard);
+    if (!hasAnyModalOpen) {
+      return;
+    }
+
+    const getActiveModal = (): HTMLDivElement | null => {
+      if (showGroupManageModal) return groupManageModalRef.current;
+      if (showGroupModal) return groupCreateModalRef.current;
+      if (showGifModal) return gifModalRef.current;
+      if (showPollModal) return pollModalRef.current;
+      if (showShortcutModal) return shortcutModalRef.current;
+      if (deleteTarget) return deleteModalRef.current;
+      if (profileCard) return profileModalRef.current;
+      return null;
+    };
+
+    const focusFirst = () => {
+      const modal = getActiveModal();
+      if (!modal) return;
+      const firstFocusable = modal.querySelector<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (firstFocusable) {
+        firstFocusable.focus();
+      } else {
+        modal.focus();
+      }
+    };
+    focusFirst();
+
+    const closeActiveModal = () => {
+      if (showGroupManageModal) setShowGroupManageModal(false);
+      else if (showGroupModal) setShowGroupModal(false);
+      else if (showGifModal) setShowGifModal(false);
+      else if (showPollModal) setShowPollModal(false);
+      else if (showShortcutModal) setShowShortcutModal(false);
+      else if (deleteTarget) setDeleteTarget(null);
+      else if (profileCard) setProfileCard(null);
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeActiveModal();
+        return;
+      }
+
+      if (event.key !== 'Tab') {
+        return;
+      }
+      const modal = getActiveModal();
+      if (!modal) return;
+
+      const focusable = Array.from(
+        modal.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((el) => !el.hasAttribute('disabled'));
+
+      if (focusable.length === 0) {
+        event.preventDefault();
+        modal.focus();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+
+      if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [showGroupManageModal, showGroupModal, showGifModal, showPollModal, showShortcutModal, deleteTarget, profileCard]);
+
+  useEffect(() => {
     if (typeof window === 'undefined' || !('Notification' in window)) {
       setShowMentionNotificationPrompt(false);
       return;
@@ -650,6 +774,19 @@ export default function ChatPage() {
     setNotificationPermission(permission);
     const dismissed = localStorage.getItem('chat_mentions_notification_prompt_dismissed') === '1';
     setShowMentionNotificationPrompt(permission === 'default' && !dismissed);
+  }, []);
+
+  useEffect(() => {
+    const syncConnection = () => {
+      setConnectionState(navigator.onLine ? 'online' : 'offline');
+    };
+    syncConnection();
+    window.addEventListener('online', syncConnection);
+    window.addEventListener('offline', syncConnection);
+    return () => {
+      window.removeEventListener('online', syncConnection);
+      window.removeEventListener('offline', syncConnection);
+    };
   }, []);
 
   useEffect(() => {
@@ -742,7 +879,7 @@ export default function ChatPage() {
         } catch (joinError) {
           if (!cancelled) {
             setRequestedInviteCode('');
-            setError(joinError instanceof Error ? joinError.message : 'Invite-Link ist ungueltig.');
+            setError(joinError instanceof Error ? joinError.message : 'Invite-Link ist ungültig.');
           }
         }
       }
@@ -790,12 +927,14 @@ export default function ChatPage() {
 
     stream.addEventListener('history', (event) => {
       if (closed) return;
+      setConnectionState('online');
       const payload = JSON.parse((event as MessageEvent).data) as { messages: AppChatMessage[] };
       setMessages(payload.messages);
     });
 
     stream.addEventListener('message', (event) => {
       if (closed) return;
+      setConnectionState('online');
       const payload = JSON.parse((event as MessageEvent).data) as { message: AppChatMessage };
       setMessages((prev) => [...prev, payload.message]);
       const message = payload.message;
@@ -816,6 +955,7 @@ export default function ChatPage() {
 
     stream.addEventListener('message_update', (event) => {
       if (closed) return;
+      setConnectionState('online');
       const payload = JSON.parse((event as MessageEvent).data) as { message: AppChatMessage };
       patchMessage(payload.message);
     });
@@ -840,6 +980,7 @@ export default function ChatPage() {
 
     stream.onerror = () => {
       if (closed) return;
+      setConnectionState(navigator.onLine ? 'reconnecting' : 'offline');
       setError('Live-Verbindung unterbrochen.');
     };
 
@@ -980,7 +1121,7 @@ export default function ChatPage() {
   }, [activeChatId, token]);
 
   useEffect(() => {
-    if (!showGroupModal && !showGroupManageModal && !showGifModal && !showPollModal && !showEmojiPanel) {
+    if (!showGroupModal && !showGroupManageModal && !showGifModal && !showPollModal && !showShortcutModal && !showEmojiPanel) {
       return;
     }
 
@@ -990,6 +1131,7 @@ export default function ChatPage() {
         setShowGroupManageModal(false);
         setShowGifModal(false);
         setShowPollModal(false);
+        setShowShortcutModal(false);
         setShowEmojiPanel(false);
       }
     };
@@ -998,7 +1140,86 @@ export default function ChatPage() {
     return () => {
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [showGroupModal, showGroupManageModal, showGifModal, showPollModal, showEmojiPanel]);
+  }, [showGroupModal, showGroupManageModal, showGifModal, showPollModal, showShortcutModal, showEmojiPanel]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isEditable =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target?.isContentEditable === true;
+
+      const withMod = event.ctrlKey || event.metaKey;
+      const key = event.key.toLowerCase();
+
+      if (withMod && key === 'k') {
+        event.preventDefault();
+        messageSearchInputRef.current?.focus();
+        return;
+      }
+
+      if (withMod && key === '/') {
+        event.preventDefault();
+        setShowShortcutModal(true);
+        return;
+      }
+
+      if (withMod && key === 'g') {
+        event.preventDefault();
+        if (event.shiftKey) {
+          if (context?.chat.kind === 'group') {
+            openGroupManagementModal();
+          } else {
+            setInfo('Gruppenübersicht ist nur in Gruppenchats verfügbar.');
+          }
+          return;
+        }
+        setGroupName('');
+        setGroupMemberIds([]);
+        setDiscoverQuery('');
+        setShowGroupModal(true);
+        return;
+      }
+
+      if (withMod && key === 'j') {
+        event.preventDefault();
+        inviteCodeInputRef.current?.focus();
+        return;
+      }
+
+      if (withMod && key === 'e') {
+        event.preventDefault();
+        setShowEmojiPanel((prev) => !prev);
+        return;
+      }
+
+      if (withMod && event.shiftKey && key === 'f') {
+        event.preventDefault();
+        setGifQuery('');
+        setGifResults([]);
+        setGifNextCursor(null);
+        setGifLoading(false);
+        setActiveGifCategory('');
+        setShowGifModal(true);
+        return;
+      }
+
+      if (withMod && event.shiftKey && key === 'p') {
+        event.preventDefault();
+        setShowPollModal(true);
+        return;
+      }
+
+      if (!withMod && !isEditable && key === '/') {
+        event.preventDefault();
+        composerInputRef.current?.focus();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [context?.chat.kind]);
 
   const fetchGifPage = async (cursor: string | null, append: boolean) => {
     if (!token || !showGifModal) {
@@ -1175,6 +1396,68 @@ export default function ChatPage() {
     });
   };
 
+  const renderMessageText = (messageText: string): ReactNode => {
+    const tokens = extractMentionTokens(messageText);
+    if (tokens.length === 0) {
+      return messageText;
+    }
+
+    const byUsername = new Map(members.map((member) => [member.user.username.toLowerCase(), member.user]));
+    const byFullName = new Map(members.map((member) => [member.user.fullName.toLowerCase().replace(/\s+/g, ''), member.user]));
+    const fragments: ReactNode[] = [];
+    let cursor = 0;
+
+    tokens.forEach((token, index) => {
+      if (token.start > cursor) {
+        fragments.push(messageText.slice(cursor, token.start));
+      }
+      const rawName = token.value.slice(1);
+      const normalized = rawName.toLowerCase();
+      const normalizedCompact = normalized.replace(/\s+/g, '');
+      const matchedUser = byUsername.get(normalized) ?? byFullName.get(normalizedCompact);
+
+      if (matchedUser) {
+        fragments.push(
+          <button
+            key={`mention-${token.start}-${index}`}
+            type="button"
+            className="mention-inline mention-inline-clickable"
+            title={`${matchedUser.fullName} (@${matchedUser.username}) • ${roleLabel(matchedUser.role)}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              void openProfile(matchedUser.id);
+            }}
+          >
+            {token.value}
+            <span className="mention-tooltip" role="tooltip">
+              <span className="mention-tooltip-head">
+                <span className="mention-tooltip-avatar">{initials(matchedUser)}</span>
+                <span className="mention-tooltip-name-wrap">
+                  <span className="mention-tooltip-name">{matchedUser.fullName}</span>
+                  <span className={`mention-tooltip-role ${roleBadgeClass(matchedUser.role)}`}>{roleLabel(matchedUser.role)}</span>
+                </span>
+              </span>
+              <span className="mention-tooltip-meta">@{matchedUser.username}</span>
+            </span>
+          </button>
+        );
+      } else {
+        fragments.push(
+          <span key={`mention-${token.start}-${index}`} className="mention-inline">
+            {token.value}
+          </span>
+        );
+      }
+
+      cursor = token.end;
+    });
+
+    if (cursor < messageText.length) {
+      fragments.push(messageText.slice(cursor));
+    }
+    return <>{fragments}</>;
+  };
+
   const jumpToMessageFromModeration = (messageId: string) => {
     setShowGroupManageModal(false);
     window.setTimeout(() => {
@@ -1188,6 +1471,23 @@ export default function ChatPage() {
 
   const patchMessage = (next: AppChatMessage) => {
     setMessages((prev) => prev.map((item) => (item.id === next.id ? next : item)));
+  };
+
+  const sendPayload = async (payload: PendingSendPayload) => {
+    if (!token) {
+      throw new Error('Keine aktive Session.');
+    }
+    await api('/api/app/chats/message', token, {
+      method: 'POST',
+      body: JSON.stringify({
+        chatId: payload.chatId,
+        text: payload.text,
+        attachmentIds: payload.attachmentIds,
+        replyToMessageId: payload.replyToMessageId,
+        gif: payload.gif,
+        poll: payload.poll
+      })
+    });
   };
 
   const uploadAttachment = async (file: File | null) => {
@@ -1300,7 +1600,7 @@ export default function ChatPage() {
       })) as { message: AppChatMessage };
       patchMessage(payload.message);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Vote fehlgeschlagen.');
+      setError(requestError instanceof Error ? requestError.message : 'Abstimmung fehlgeschlagen.');
     }
   };
 
@@ -1315,7 +1615,7 @@ export default function ChatPage() {
       })) as { message: AppChatMessage };
       patchMessage(payload.message);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Reaction fehlgeschlagen.');
+      setError(requestError instanceof Error ? requestError.message : 'Reaktion fehlgeschlagen.');
     }
   };
 
@@ -1425,7 +1725,7 @@ export default function ChatPage() {
       }
       setDeleteTarget(null);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Loeschen fehlgeschlagen.');
+      setError(requestError instanceof Error ? requestError.message : 'Löschen fehlgeschlagen.');
     }
   };
 
@@ -1526,24 +1826,25 @@ export default function ChatPage() {
     const hasAttachments = pendingAttachments.length > 0;
     if (!textForSend && !hasPoll && !hasGif && !hasAttachments) return;
 
+    const requestPayload: PendingSendPayload = {
+      clientId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      createdAt: Date.now(),
+      chatId: activeChatId,
+      text: textForSend,
+      attachmentIds: pendingAttachments.map((item) => item.id),
+      replyToMessageId: replyTarget?.id ?? null,
+      gif: hasGif ? selectedGif : null,
+      poll: hasPoll
+        ? {
+            question: pollQuestion.trim(),
+            options: pollOptions.map((item) => item.trim()).filter((item) => item.length > 0)
+          }
+        : null
+    };
+
     setError(null);
     try {
-      await api('/api/app/chats/message', token, {
-        method: 'POST',
-        body: JSON.stringify({
-          chatId: activeChatId,
-          text: textForSend,
-          attachmentIds: pendingAttachments.map((item) => item.id),
-          replyToMessageId: replyTarget?.id ?? null,
-          gif: hasGif ? selectedGif : null,
-          poll: hasPoll
-            ? {
-                question: pollQuestion.trim(),
-                options: pollOptions.map((item) => item.trim()).filter((item) => item.length > 0)
-              }
-            : null
-        })
-      });
+      await sendPayload(requestPayload);
       setText('');
       setResolvedTenorDraftUrl('');
       setPendingAttachments([]);
@@ -1560,9 +1861,51 @@ export default function ChatPage() {
         void setTypingState(false);
       }
     } catch (requestError) {
+      setPendingSendQueue((prev) => [...prev, requestPayload]);
       setError(requestError instanceof Error ? requestError.message : 'Nachricht fehlgeschlagen.');
     }
   };
+
+  const retryPendingMessage = async () => {
+    if (!token || pendingSendQueue.length === 0) return;
+    const nextItem = pendingSendQueue[0];
+    setError(null);
+    try {
+      await sendPayload(nextItem);
+      setPendingSendQueue((prev) => prev.filter((item) => item.clientId !== nextItem.clientId));
+      setInfo('Eine wartende Nachricht wurde erfolgreich gesendet.');
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Erneutes Senden fehlgeschlagen.');
+    }
+  };
+
+  useEffect(() => {
+    if (!token || pendingSendQueue.length === 0 || connectionState !== 'online') {
+      return;
+    }
+    let cancelled = false;
+    const flushQueue = async () => {
+      for (const item of pendingSendQueue) {
+        if (cancelled) return;
+        try {
+          await sendPayload(item);
+          setPendingSendQueue((prev) => prev.filter((queueItem) => queueItem.clientId !== item.clientId));
+        } catch {
+          if (!cancelled) {
+            setConnectionState(navigator.onLine ? 'reconnecting' : 'offline');
+          }
+          return;
+        }
+      }
+      if (!cancelled) {
+        setInfo('Wartende Nachrichten wurden gesendet.');
+      }
+    };
+    void flushQueue();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, connectionState, pendingSendQueue]);
 
   const createGroup = async () => {
     if (!token || !groupName.trim()) return;
@@ -1762,7 +2105,7 @@ export default function ChatPage() {
     }
     await manageMember(ownershipTargetUserId, 'transfer_ownership');
     setOwnershipTargetUserId('');
-    setInfo('Ownership uebertragen. Du bist jetzt User in der Gruppe.');
+    setInfo('Besitz übertragen. Du bist jetzt Nutzer in der Gruppe.');
   };
 
   const joinGroupByInviteCode = async () => {
@@ -1784,7 +2127,7 @@ export default function ChatPage() {
       })) as { chat: { id: string } };
       setGroupInviteCodeInput('');
       await selectChat(payload.chat.id);
-      setInfo('Gruppe ueber Invite-Link beigetreten.');
+      setInfo('Gruppe über Invite-Link beigetreten.');
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Beitritt per Invite-Link fehlgeschlagen.');
     } finally {
@@ -1853,12 +2196,12 @@ export default function ChatPage() {
       localStorage.setItem('chat_mentions_notification_prompt_dismissed', '1');
       if (permission === 'granted') {
         playMentionTone();
-        setInfo('Desktop-Benachrichtigungen fuer Erwaehnungen aktiviert.');
+        setInfo('Desktop-Benachrichtigungen für Erwähnungen aktiviert.');
       } else {
         setInfo('Desktop-Benachrichtigungen nicht aktiviert.');
       }
     } catch {
-      setError('Berechtigung fuer Benachrichtigungen konnte nicht angefragt werden.');
+      setError('Berechtigung für Benachrichtigungen konnte nicht angefragt werden.');
     }
   };
 
@@ -1877,7 +2220,7 @@ export default function ChatPage() {
 
     const textSnippet = message.text.trim() || '[Nachricht]';
     try {
-      const notification = new Notification(`Erwaehnung in ${chatName}`, {
+      const notification = new Notification(`Erwähnung in ${chatName}`, {
         body: `${message.user.fullName}: ${textSnippet}`.slice(0, 220),
         tag: `mention-${message.id}`
       });
@@ -2001,7 +2344,7 @@ export default function ChatPage() {
                 Profil
               </Link>
               <button className="btn-soft text-xs" onClick={() => void logout()}>
-                Logout
+                Abmelden
               </button>
             </div>
           </div>
@@ -2052,16 +2395,17 @@ export default function ChatPage() {
             </ul>
 
             <div className="mt-3 rounded-lg border border-slate-600/60 bg-slate-900/55 p-2">
-              <p className="surface-muted text-[11px] uppercase tracking-wide">Per Invite-Code beitreten</p>
+              <p className="surface-muted text-[11px] uppercase tracking-wide">Mit Einladungs-Code beitreten</p>
               <div className="mt-2 flex items-center gap-2">
                 <input
+                  ref={inviteCodeInputRef}
                   className="glass-input text-xs"
-                  placeholder="Invite-Code"
+                  placeholder="Einladungs-Code"
                   value={groupInviteCodeInput}
                   onChange={(event) => setGroupInviteCodeInput(event.target.value)}
                 />
                 <button className="btn-soft px-2 py-1 text-xs" onClick={() => void joinGroupByInviteCode()}>
-                  Join
+                  Beitreten
                 </button>
               </div>
             </div>
@@ -2088,6 +2432,9 @@ export default function ChatPage() {
               </p>
             </div>
             <div className="hidden items-center gap-2 text-xs text-slate-300 sm:flex">
+              <button className="btn-soft px-2 py-1 text-xs" onClick={() => setShowShortcutModal(true)}>
+                ? Shortcuts
+              </button>
               {firstUnreadMessageId && unreadCountAtOpen > 0 ? (
                 <button className="btn-soft px-2 py-1 text-xs" onClick={jumpToFirstUnread}>
                   Zum ersten Ungelesenen ({unreadCountAtOpen})
@@ -2095,7 +2442,7 @@ export default function ChatPage() {
               ) : null}
               {context?.chat.kind === 'group' ? (
                 <button className="btn-soft px-2 py-1 text-xs" onClick={openGroupManagementModal}>
-                  Overview & Settings
+                  Übersicht & Einstellungen
                 </button>
               ) : null}
             </div>
@@ -2104,23 +2451,30 @@ export default function ChatPage() {
           <AnimatePresence>
             {showMentionNotificationPrompt ? (
               <motion.div className="mention-banner mx-3 mt-2 rounded-lg px-3 py-2 text-xs" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
-                <p className="text-slate-100">Desktop-Benachrichtigungen fuer @mentions aktivieren?</p>
+                <p className="text-slate-100">Desktop-Benachrichtigungen für @mentions aktivieren?</p>
                 <div className="mt-2 flex gap-2">
                   <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void enableMentionNotifications()}>
                     Aktivieren
                   </button>
                   <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={dismissMentionNotificationPrompt}>
-                    Spaeter
+                    Später
                   </button>
                 </div>
               </motion.div>
             ) : null}
           </AnimatePresence>
 
+          {connectionState !== 'online' ? (
+            <motion.div className="mx-3 mt-2 rounded-lg px-3 py-2 text-xs alert-info" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}>
+              {connectionState === 'offline' ? 'Du bist offline. Nachrichten werden gesendet, sobald die Verbindung wieder da ist.' : 'Verbindung wird wiederhergestellt...'}
+            </motion.div>
+          ) : null}
+
           <div className="px-3 pb-2">
             <div className="glass-card rounded-lg p-2">
               <div className="flex flex-wrap items-center gap-2">
                 <input
+                  ref={messageSearchInputRef}
                   className="glass-input min-w-[12rem] flex-1 text-xs"
                   placeholder="Nachrichten durchsuchen..."
                   value={messageSearchQuery}
@@ -2135,7 +2489,7 @@ export default function ChatPage() {
                   ))}
                 </select>
                 <button className={`btn-soft px-2 py-1 text-xs ${showPinnedOnly ? 'border-indigo-400/70 text-indigo-100' : ''}`} type="button" onClick={() => setShowPinnedOnly((prev) => !prev)}>
-                  Nur Pinned
+                  Nur Angepinnte
                 </button>
               </div>
             </div>
@@ -2147,7 +2501,7 @@ export default function ChatPage() {
               const isUnreadStart = firstUnreadMessageId === message.id && unreadCountAtOpen > 0;
               const canEdit = isMe && !message.deletedForAll;
               const allowDeleteForAll = canDeleteForAll(message);
-              const displayText = message.deletedForAll ? 'Nachricht wurde geloescht.' : message.text;
+              const displayText = message.deletedForAll ? 'Nachricht wurde gelöscht.' : message.text;
               const isGroupChat = context?.chat.kind === 'group';
               const isDirectChat = context?.chat.kind === 'direct';
               const latestReadAt = message.readBy.length > 0 ? message.readBy[message.readBy.length - 1]?.readAt ?? null : null;
@@ -2188,6 +2542,7 @@ export default function ChatPage() {
                           <div className="relative">
                             <button
                               className="message-menu-trigger"
+                              aria-label="Nachrichtenmenü öffnen"
                               onClick={(event) => {
                                 event.stopPropagation();
                                 openMenuForMessage(message.id, event.currentTarget);
@@ -2209,7 +2564,7 @@ export default function ChatPage() {
                                   >
                                     <div className="message-menu-row">
                                       {QUICK_EMOJIS.slice(0, 6).map((emoji) => (
-                                        <button key={`${message.id}-menu-${emoji}`} className="reaction-chip quick" onClick={() => void reactToMessage(message.id, emoji)}>
+                                        <button key={`${message.id}-menu-${emoji}`} className="reaction-chip quick" aria-label={`Mit ${emoji} reagieren`} onClick={() => void reactToMessage(message.id, emoji)}>
                                           {emoji}
                                         </button>
                                       ))}
@@ -2238,9 +2593,9 @@ export default function ChatPage() {
                                       </button>
                                     ) : null}
                                     <button className="message-menu-item danger" onClick={() => openDeleteModal(message)}>
-                                      Loeschen
+                                      Löschen
                                     </button>
-                                    {!allowDeleteForAll ? <p className="message-menu-hint">Fuer alle nur als Gruppen-Owner oder globaler Superadmin.</p> : null}
+                                    {!allowDeleteForAll ? <p className="message-menu-hint">Für alle nur als Gruppen-Owner oder globaler Superadmin.</p> : null}
                                   </div>,
                                   document.body
                                 )
@@ -2256,7 +2611,7 @@ export default function ChatPage() {
                         </div>
                       ) : null}
 
-                      {displayText ? <p className={`whitespace-pre-wrap break-words text-sm ${isMe ? 'text-indigo-50' : 'text-slate-100'}`}>{displayText}</p> : null}
+                      {displayText ? <p className={`whitespace-pre-wrap break-words text-sm ${isMe ? 'text-indigo-50' : 'text-slate-100'}`}>{renderMessageText(displayText)}</p> : null}
 
                       {message.gif && !message.deletedForAll ? (
                         <div className="mt-2">
@@ -2343,7 +2698,7 @@ export default function ChatPage() {
               );
             })}
 
-            {filteredMessages.length === 0 ? <p className="surface-muted text-sm">Keine Nachrichten fuer diesen Filter.</p> : null}
+            {filteredMessages.length === 0 ? <p className="surface-muted text-sm">Keine Nachrichten für diesen Filter.</p> : null}
             <div ref={bottomRef} />
           </motion.div>
 
@@ -2405,7 +2760,7 @@ export default function ChatPage() {
                     @here
                   </button>
                 ) : null}
-                {isUploading ? <span className="surface-muted text-xs">Upload laeuft...</span> : null}
+                {isUploading ? <span className="surface-muted text-xs">Upload läuft...</span> : null}
                 {isResolvingTenorLink ? <span className="surface-muted text-xs">Tenor-Link wird als GIF erkannt...</span> : null}
                 <input
                   ref={fileInputRef}
@@ -2455,7 +2810,7 @@ export default function ChatPage() {
 
               {replyTarget ? (
                 <div className="composer-banner mb-2">
-                  Antwort auf {replyTarget.user.fullName}: {replyTarget.text || (replyTarget.deletedForAll ? 'Nachricht geloescht.' : '[Nachricht]')}
+                  Antwort auf {replyTarget.user.fullName}: {replyTarget.text || (replyTarget.deletedForAll ? 'Nachricht gelöscht.' : '[Nachricht]')}
                   <button type="button" className="underline" onClick={() => setReplyTarget(null)}>
                     Entfernen
                   </button>
@@ -2469,6 +2824,15 @@ export default function ChatPage() {
                       {attachment.fileName} ×
                     </button>
                   ))}
+                </div>
+              ) : null}
+
+              {pendingSendQueue.length > 0 ? (
+                <div className="composer-banner warn mb-2">
+                  {pendingSendQueue.length} Nachricht(en) warten auf Versand.
+                  <button type="button" className="underline" onClick={() => void retryPendingMessage()}>
+                    Erste jetzt senden
+                  </button>
                 </div>
               ) : null}
 
@@ -2514,6 +2878,7 @@ export default function ChatPage() {
                 ) : null}
                 <div className="flex items-center gap-2">
                   <input
+                    ref={composerInputRef}
                     className="glass-input border-none bg-transparent text-sm shadow-none focus:shadow-none"
                     placeholder={editingMessageId ? 'Nachricht bearbeiten...' : 'Nachricht schreiben...'}
                     value={text}
@@ -2548,7 +2913,7 @@ export default function ChatPage() {
           transition={{ duration: 0.36, delay: 0.2 }}
         >
           <section>
-            <h2 className="surface-muted text-xs font-semibold uppercase tracking-wide">Members ({members.length})</h2>
+            <h2 className="surface-muted text-xs font-semibold uppercase tracking-wide">Mitglieder ({members.length})</h2>
             <ul className="mt-2 max-h-52 space-y-1.5 overflow-y-auto">
               {members.map((member) => (
                 <motion.li key={member.user.id} className="glass-card rounded-lg p-2 text-sm" whileHover={{ x: 2 }}>
@@ -2566,7 +2931,7 @@ export default function ChatPage() {
           </section>
 
           <section className="mt-4">
-            <h2 className="surface-muted text-xs font-semibold uppercase tracking-wide">Discover</h2>
+            <h2 className="surface-muted text-xs font-semibold uppercase tracking-wide">Entdecken</h2>
             <input
               className="glass-input mt-2 text-sm"
               placeholder="Suche User"
@@ -2587,7 +2952,7 @@ export default function ChatPage() {
                       </button>
                       {!user.isFriend ? (
                         <button className="btn-soft px-2 py-1 text-xs" onClick={() => void sendFriendRequest(user.id)}>
-                          Add
+                          Hinzufuegen
                         </button>
                       ) : null}
                     </div>
@@ -2602,10 +2967,10 @@ export default function ChatPage() {
 
       {showGroupManageModal && context?.chat.kind === 'group' && groupSettings ? (
         <motion.div className="modal-overlay" onClick={() => setShowGroupManageModal(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-          <motion.div className="modal-card" onClick={(event) => event.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}>
-            <h2 className="text-lg font-semibold text-slate-100">Group Overview & Settings</h2>
+          <motion.div ref={groupManageModalRef} role="dialog" aria-modal="true" aria-labelledby="group-manage-dialog-title" tabIndex={-1} className="modal-card" onClick={(event) => event.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}>
+            <h2 id="group-manage-dialog-title" className="text-lg font-semibold text-slate-100">Gruppenübersicht & Einstellungen</h2>
             <p className="surface-muted mt-1 text-xs">
-              WhatsApp/Discord-style Uebersicht mit Schnellfinder fuer Links, Medien und Dateien.
+              WhatsApp-/Discord-Stil mit Schnellfinder für Links, Medien und Dateien.
             </p>
 
             <div className="mt-4 flex flex-wrap gap-2">
@@ -2614,14 +2979,14 @@ export default function ChatPage() {
                 type="button"
                 onClick={() => setGroupOverviewTab('overview')}
               >
-                Overview
+                Übersicht
               </button>
               <button
                 className={`btn-soft px-2 py-1 text-xs ${groupOverviewTab === 'finder' ? 'border-indigo-400/70 text-indigo-100' : ''}`}
                 type="button"
                 onClick={() => setGroupOverviewTab('finder')}
               >
-                Links & Media Finder
+                Links- und Medienfinder
               </button>
               {(groupSettings.canManageUsers || groupSettings.canManageSettings || groupSettings.canTransferOwnership || groupSettings.canCloseGroup) ? (
                 <button
@@ -2731,7 +3096,7 @@ export default function ChatPage() {
             {groupOverviewTab === 'admin' ? (
             <>
             <section className="mt-4">
-              <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Pinned Messages</h3>
+              <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Angepinnte Nachrichten</h3>
               <ul className="mt-2 max-h-44 space-y-1.5 overflow-y-auto">
                 {pinnedMessages.map((message) => (
                   <li key={`pinned-${message.id}`} className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-2">
@@ -2746,7 +3111,7 @@ export default function ChatPage() {
             </section>
 
             <section className="mt-4">
-              <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Moderation Log</h3>
+              <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Moderationsprotokoll</h3>
               <ul className="mt-2 max-h-44 space-y-1.5 overflow-y-auto">
                 {moderationLogs.map((event) => (
                   (() => {
@@ -2831,8 +3196,8 @@ export default function ChatPage() {
                 >
                   <option value="">
                     {groupSettings.canInviteDirectly
-                      ? 'User aus Discover hinzufuegen...'
-                      : `Deaktiviert (${groupSettings.inviteMode === 'invite_link' ? 'Invite-Link erforderlich' : `Policy: ${invitePolicyLabel(groupSettings.invitePolicy)}`})`}
+                      ? 'Nutzer aus Entdecken hinzufügen...'
+                      : `Deaktiviert (${groupSettings.inviteMode === 'invite_link' ? 'Invite-Link erforderlich' : `Regel: ${invitePolicyLabel(groupSettings.invitePolicy)}`})`}
                   </option>
                   {discoverCandidates.map((user) => (
                     <option key={user.id} value={user.id}>
@@ -2845,7 +3210,7 @@ export default function ChatPage() {
 
             {groupSettings.canManageSettings ? (
               <section className="mt-4">
-                <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Gruppen-Policy</h3>
+                <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Gruppenregeln</h3>
                 <div className="mt-2 space-y-2">
                   <label className="block space-y-1">
                     <span className="surface-muted text-xs uppercase tracking-wide">Beitrittsmodus</span>
@@ -2892,7 +3257,7 @@ export default function ChatPage() {
 
                   <label className="flex items-center gap-2 rounded-md border border-slate-700/70 bg-slate-900/45 px-3 py-2 text-sm text-slate-200">
                     <input type="checkbox" checked={groupAutoHide24hDraft} onChange={(event) => setGroupAutoHide24hDraft(event.target.checked)} />
-                    Nachrichten nach 24h fuer alle ausblenden (DB bleibt erhalten)
+                    Nachrichten nach 24h für alle ausblenden (DB bleibt erhalten)
                   </label>
 
                   <button className="btn-primary text-sm" type="button" onClick={() => void saveGroupSettings()} disabled={isBusy}>
@@ -2927,10 +3292,10 @@ export default function ChatPage() {
 
             {groupSettings.canTransferOwnership ? (
               <section className="mt-4">
-                <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Ownership uebertragen</h3>
+                <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Besitz übertragen</h3>
                 <div className="mt-2 flex items-center gap-2">
                   <select className="glass-input text-sm" value={ownershipTargetUserId} onChange={(event) => setOwnershipTargetUserId(event.target.value)}>
-                    <option value="">Neuen Superadmin auswaehlen...</option>
+                    <option value="">Neuen Superadmin auswählen...</option>
                     {members
                       .filter((member) => member.user.id !== me.id)
                       .map((member) => (
@@ -2945,7 +3310,7 @@ export default function ChatPage() {
                     onClick={() => void transferOwnership()}
                     disabled={!ownershipTargetUserId}
                   >
-                    Uebertragen
+                    Übertragen
                   </button>
                 </div>
               </section>
@@ -2971,9 +3336,9 @@ export default function ChatPage() {
 
       {showGroupModal ? (
         <motion.div className="modal-overlay" onClick={() => setShowGroupModal(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-          <motion.div className="modal-card" onClick={(event) => event.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}>
-            <h2 className="text-lg font-semibold text-slate-100">Neue Gruppe erstellen</h2>
-            <p className="surface-muted mt-1 text-xs">Discord-Style Group Creator mit schneller Channel-Struktur.</p>
+          <motion.div ref={groupCreateModalRef} role="dialog" aria-modal="true" aria-labelledby="group-create-dialog-title" tabIndex={-1} className="modal-card" onClick={(event) => event.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}>
+            <h2 id="group-create-dialog-title" className="text-lg font-semibold text-slate-100">Neue Gruppe erstellen</h2>
+            <p className="surface-muted mt-1 text-xs">Gruppenerstellung im Discord-Stil mit schneller Kanalstruktur.</p>
 
             <label className="mt-4 block space-y-1">
               <span className="surface-muted text-xs uppercase tracking-wide">Gruppenname</span>
@@ -3026,8 +3391,8 @@ export default function ChatPage() {
 
       {showGifModal ? (
         <motion.div className="modal-overlay" onClick={() => setShowGifModal(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-          <motion.div className="modal-card" onClick={(event) => event.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}>
-            <h2 className="text-lg font-semibold text-slate-100">GIF Picker (Discord Style)</h2>
+          <motion.div ref={gifModalRef} role="dialog" aria-modal="true" aria-labelledby="gif-dialog-title" tabIndex={-1} className="modal-card" onClick={(event) => event.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}>
+            <h2 id="gif-dialog-title" className="text-lg font-semibold text-slate-100">GIF-Auswahl (Discord-Stil)</h2>
             <div className="mt-3">
               <input
                 className="glass-input text-sm"
@@ -3048,7 +3413,7 @@ export default function ChatPage() {
                   className={`gif-tab ${activeGifCategory === '' ? 'active' : ''}`}
                   onClick={() => setActiveGifCategory('')}
                 >
-                  Trending
+                  Im Trend
                 </button>
                 {visibleGifCategories.slice(0, 14).map((category) => (
                   <button
@@ -3071,7 +3436,7 @@ export default function ChatPage() {
                 <p className="surface-muted text-sm">
                   {activeGifCategory === GIF_SAVED_CATEGORY
                     ? 'Keine gespeicherten GIFs.'
-                    : 'Keine GIFs gefunden. Pruefe TENOR_API_KEY und versuche einen Suchbegriff.'}
+                    : 'Keine GIFs gefunden. Prüfe TENOR_API_KEY und versuche einen Suchbegriff.'}
                 </p>
               ) : null}
             </div>
@@ -3089,8 +3454,8 @@ export default function ChatPage() {
 
       {showPollModal ? (
         <motion.div className="modal-overlay" onClick={() => setShowPollModal(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-          <motion.div className="modal-card" onClick={(event) => event.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}>
-            <h2 className="text-lg font-semibold text-slate-100">Umfrage erstellen</h2>
+          <motion.div ref={pollModalRef} role="dialog" aria-modal="true" aria-labelledby="poll-dialog-title" tabIndex={-1} className="modal-card" onClick={(event) => event.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}>
+            <h2 id="poll-dialog-title" className="text-lg font-semibold text-slate-100">Umfrage erstellen</h2>
             <input
               className="glass-input mt-3 text-sm"
               placeholder="Frage"
@@ -3133,7 +3498,7 @@ export default function ChatPage() {
                   Abbrechen
                 </button>
                 <button className="btn-primary px-2 py-1 text-xs" onClick={applyPollFromModal}>
-                  Uebernehmen
+                  Übernehmen
                 </button>
               </div>
             </div>
@@ -3141,21 +3506,55 @@ export default function ChatPage() {
         </motion.div>
       ) : null}
 
+      {showShortcutModal ? (
+        <motion.div className="modal-overlay" onClick={() => setShowShortcutModal(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+          <motion.div
+            ref={shortcutModalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="shortcut-dialog-title"
+            tabIndex={-1}
+            className="modal-card shortcut-modal"
+            onClick={(event) => event.stopPropagation()}
+            initial={{ opacity: 0, y: 16, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <h2 id="shortcut-dialog-title" className="text-lg font-semibold text-slate-100">Tastenkürzel</h2>
+              <button className="btn-soft px-2 py-1 text-xs" onClick={() => setShowShortcutModal(false)}>Schließen</button>
+            </div>
+            <p className="surface-muted mt-1 text-xs">Schnellaktionen ähnlich Discord für Navigation und Chat-Steuerung.</p>
+            <div className="shortcut-list mt-4">
+              <div className="shortcut-row"><span>Suche fokussieren</span><kbd>Strg/Cmd + K</kbd></div>
+              <div className="shortcut-row"><span>Neue Gruppe öffnen</span><kbd>Strg/Cmd + G</kbd></div>
+              <div className="shortcut-row"><span>Gruppenübersicht öffnen</span><kbd>Strg/Cmd + Umschalt + G</kbd></div>
+              <div className="shortcut-row"><span>Invite-Code fokussieren</span><kbd>Strg/Cmd + J</kbd></div>
+              <div className="shortcut-row"><span>Emoji-Panel umschalten</span><kbd>Strg/Cmd + E</kbd></div>
+              <div className="shortcut-row"><span>GIF-Auswahl öffnen</span><kbd>Strg/Cmd + Umschalt + F</kbd></div>
+              <div className="shortcut-row"><span>Umfrage öffnen</span><kbd>Strg/Cmd + Umschalt + P</kbd></div>
+              <div className="shortcut-row"><span>Composer fokussieren</span><kbd>/</kbd></div>
+              <div className="shortcut-row"><span>Shortcut-Hilfe öffnen</span><kbd>Strg/Cmd + /</kbd></div>
+              <div className="shortcut-row"><span>Dialog schließen</span><kbd>Esc</kbd></div>
+            </div>
+          </motion.div>
+        </motion.div>
+      ) : null}
+
       {deleteTarget ? (
         <motion.div className="modal-overlay" onClick={() => setDeleteTarget(null)} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-          <motion.div className="modal-card" onClick={(event) => event.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}>
-            <h2 className="text-lg font-semibold text-slate-100">Nachricht loeschen</h2>
+          <motion.div ref={deleteModalRef} role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title" tabIndex={-1} className="modal-card" onClick={(event) => event.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}>
+            <h2 id="delete-dialog-title" className="text-lg font-semibold text-slate-100">Nachricht löschen</h2>
             <p className="surface-muted mt-2 text-sm">
-              Du kannst diese Nachricht fuer dich loeschen
-              {canDeleteForAll(deleteTarget) ? ' oder fuer alle Teilnehmer.' : '.'}
+              Du kannst diese Nachricht für dich löschen
+              {canDeleteForAll(deleteTarget) ? ' oder für alle Teilnehmer.' : '.'}
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               <button className="btn-soft" onClick={() => void deleteMessage('me')}>
-                Fuer mich loeschen
+                Für mich löschen
               </button>
               {canDeleteForAll(deleteTarget) ? (
                 <button className="btn-soft border-rose-500/40 text-rose-200" onClick={() => void deleteMessage('all')}>
-                  Fuer alle loeschen
+                  Für alle löschen
                 </button>
               ) : null}
               <button className="btn-primary" onClick={() => setDeleteTarget(null)}>
@@ -3168,18 +3567,18 @@ export default function ChatPage() {
 
       {profileCard ? (
         <motion.div className="modal-overlay" onClick={() => setProfileCard(null)} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-          <motion.div className="modal-card" onClick={(event) => event.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}>
+          <motion.div ref={profileModalRef} role="dialog" aria-modal="true" aria-labelledby="profile-dialog-title" tabIndex={-1} className="modal-card" onClick={(event) => event.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}>
             <div className="flex items-center gap-3">
               <Avatar user={profileCard} size={56} sessionToken={token} />
               <div>
-                <h2 className="text-lg font-semibold text-slate-100">{profileCard.fullName}</h2>
+                <h2 id="profile-dialog-title" className="text-lg font-semibold text-slate-100">{profileCard.fullName}</h2>
                 <p className="surface-muted text-sm">@{profileCard.username}</p>
                 <span className={`mt-1 inline-flex ${roleBadgeClass(profileCard.role)}`}>{roleLabel(profileCard.role)}</span>
               </div>
             </div>
 
             <p className="mt-4 whitespace-pre-wrap text-sm text-slate-100">{profileCard.bio || 'Keine Bio gesetzt.'}</p>
-            {profileCard.email ? <p className="surface-muted mt-2 text-xs">Email: {profileCard.email}</p> : null}
+            {profileCard.email ? <p className="surface-muted mt-2 text-xs">E-Mail: {profileCard.email}</p> : null}
 
             <div className="mt-4 flex gap-2">
               <button className="btn-soft text-xs" onClick={() => void startDirect(profileCard.id)}>
@@ -3195,13 +3594,13 @@ export default function ChatPage() {
             {me.role === 'superadmin' ? (
               <div className="mt-4 grid grid-cols-3 gap-2">
                 <button className="btn-soft text-xs" onClick={() => void changeGlobalRole(profileCard.id, 'user')}>
-                  set user
+                  Als Nutzer setzen
                 </button>
                 <button className="btn-soft text-xs" onClick={() => void changeGlobalRole(profileCard.id, 'admin')}>
-                  set admin
+                  Als Admin setzen
                 </button>
                 <button className="btn-soft text-xs" onClick={() => void changeGlobalRole(profileCard.id, 'superadmin')}>
-                  set superadmin
+                  Als Superadmin setzen
                 </button>
               </div>
             ) : null}

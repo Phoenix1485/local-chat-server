@@ -11,6 +11,8 @@
     "start": "next start -p 8080",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui",
     "check": "npm run typecheck && npm run lint",
     "check:all": "npm run check && npm run build",
     "vercel:pull": "vercel pull --yes --environment=preview",
@@ -20,12 +22,14 @@
     "vercel:preflight": "npm run check:all && npm run vercel:build"
   },
   "dependencies": {
+    "@sentry/nextjs": "^10.48.0",
     "mysql2": "^3.11.3",
     "next": "14.2.20",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@types/node": "20.16.12",
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
