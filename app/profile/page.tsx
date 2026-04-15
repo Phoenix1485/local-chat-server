@@ -1,7 +1,7 @@
-﻿'use client';
+'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { AppBootstrap, AppUserProfile, GlobalRole } from '@/types/social';
 
@@ -21,9 +21,9 @@ function avatarUrl(user: Pick<AppUserProfile, 'id' | 'avatarUpdatedAt'>, session
 }
 
 function roleLabel(role: GlobalRole): string {
-  if (role === 'superadmin') return 'superadmin';
-  if (role === 'admin') return 'admin';
-  return 'user';
+  if (role === 'superadmin') return 'Superadmin';
+  if (role === 'admin') return 'Admin';
+  return 'Nutzer';
 }
 
 function roleBadgeClass(role: GlobalRole): string {
@@ -74,7 +74,7 @@ async function api(path: string, token: string, init?: RequestInit) {
   const contentType = response.headers.get('content-type') ?? '';
   const payload = contentType.includes('application/json') ? await response.json().catch(() => null) : null;
   if (!response.ok) {
-    const message = payload && typeof payload === 'object' && 'error' in payload ? String(payload.error) : 'Request failed.';
+    const message = payload && typeof payload === 'object' && 'error' in payload ? String(payload.error) : 'Anfrage fehlgeschlagen.';
     throw new Error(message);
   }
 
@@ -98,6 +98,7 @@ export default function ProfilePage() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [profileHydrated, setProfileHydrated] = useState(false);
+  const profileModalRef = useRef<HTMLDivElement | null>(null);
 
   const me = bootstrap?.me ?? null;
   const friends = bootstrap?.friends ?? [];
@@ -157,6 +158,40 @@ export default function ProfilePage() {
         setDiscoverUsers([]);
       });
   }, [discoverQuery, token]);
+
+  useEffect(() => {
+    if (!profileCard) {
+      return;
+    }
+    const modal = profileModalRef.current;
+    const focusable = modal?.querySelector<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    (focusable ?? modal)?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!profileModalRef.current) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setProfileCard(null);
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const elements = Array.from(profileModalRef.current.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')).filter((el) => !el.hasAttribute('disabled'));
+      if (elements.length === 0) return;
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [profileCard]);
 
   const saveProfile = async () => {
     if (!token) return;
@@ -333,10 +368,10 @@ export default function ProfilePage() {
 
             <div className="mt-4 grid gap-2 sm:grid-cols-2">
               <Link className="btn-soft text-center" href="/chat">
-                Zurueck zum Chat
+                Zurück zum Chat
               </Link>
               <button className="btn-soft" onClick={() => void logout()}>
-                Logout
+                Abmelden
               </button>
             </div>
           </div>
@@ -346,7 +381,7 @@ export default function ProfilePage() {
             <div className="mt-3 space-y-2">
               <input className="glass-input text-sm" placeholder="Vorname" value={profileFirstName} onChange={(event) => setProfileFirstName(event.target.value)} />
               <input className="glass-input text-sm" placeholder="Nachname" value={profileLastName} onChange={(event) => setProfileLastName(event.target.value)} />
-              <input className="glass-input text-sm" placeholder="Email optional" value={profileEmail} onChange={(event) => setProfileEmail(event.target.value)} />
+              <input className="glass-input text-sm" placeholder="E-Mail optional" value={profileEmail} onChange={(event) => setProfileEmail(event.target.value)} />
               <textarea className="glass-input min-h-24 text-sm" placeholder="Bio" value={profileBio} onChange={(event) => setProfileBio(event.target.value)} />
               <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="file-input" onChange={(event) => void uploadAvatar(event.target.files?.[0] ?? null)} />
               <button disabled={isBusy} className="btn-primary w-full text-sm" onClick={() => void saveProfile()}>
@@ -355,13 +390,13 @@ export default function ProfilePage() {
             </div>
           </div>
 
-          {error ? <p className="alert-error mt-3 rounded-md px-3 py-2 text-sm">{error}</p> : null}
-          {info ? <p className="alert-info mt-3 rounded-md px-3 py-2 text-sm">{info}</p> : null}
+          {error ? <p role="alert" aria-live="assertive" className="alert-error mt-3 rounded-md px-3 py-2 text-sm">{error}</p> : null}
+          {info ? <p role="status" aria-live="polite" className="alert-info mt-3 rounded-md px-3 py-2 text-sm">{info}</p> : null}
         </section>
 
         <section className="profile-column">
           <div className="glass-panel rounded-2xl p-4">
-            <h2 className="surface-muted text-xs font-semibold uppercase tracking-wide">Friends ({friends.length})</h2>
+            <h2 className="surface-muted text-xs font-semibold uppercase tracking-wide">Freunde ({friends.length})</h2>
             <ul className="mt-2 max-h-80 space-y-1.5 overflow-y-auto">
               {friends.map((friend) => (
                 <li key={friend.id} className="glass-card rounded-lg p-2">
@@ -386,17 +421,17 @@ export default function ProfilePage() {
           </div>
 
           <div className="glass-panel mt-3 rounded-2xl p-4">
-            <h2 className="surface-muted text-xs font-semibold uppercase tracking-wide">Requests</h2>
+            <h2 className="surface-muted text-xs font-semibold uppercase tracking-wide">Anfragen</h2>
             <ul className="mt-2 max-h-72 space-y-1.5 overflow-y-auto">
               {incoming.map((request) => (
                 <li key={request.id} className="glass-card rounded-lg p-2 text-sm">
                   <p>{request.sender.fullName}</p>
                   <div className="mt-2 flex gap-2">
                     <button className="btn-soft px-2 py-1 text-xs" onClick={() => void respondFriend(request.id, 'accept')}>
-                      Accept
+                      Annehmen
                     </button>
                     <button className="btn-soft px-2 py-1 text-xs" onClick={() => void respondFriend(request.id, 'decline')}>
-                      Decline
+                      Ablehnen
                     </button>
                   </div>
                 </li>
@@ -407,7 +442,7 @@ export default function ProfilePage() {
                 </li>
               ))}
               {incoming.length === 0 && outgoing.length === 0 ? (
-                <li className="surface-muted text-sm">Keine offenen Requests.</li>
+                <li className="surface-muted text-sm">Keine offenen Anfragen.</li>
               ) : null}
             </ul>
           </div>
@@ -415,7 +450,7 @@ export default function ProfilePage() {
 
         <section className="profile-column">
           <div className="glass-panel rounded-2xl p-4">
-            <h2 className="surface-muted text-xs font-semibold uppercase tracking-wide">Discover</h2>
+            <h2 className="surface-muted text-xs font-semibold uppercase tracking-wide">Entdecken</h2>
             <input
               className="glass-input mt-2 text-sm"
               placeholder="Suche User"
@@ -436,7 +471,7 @@ export default function ProfilePage() {
                       </button>
                       {!user.isFriend ? (
                         <button className="btn-soft px-2 py-1 text-xs" onClick={() => void sendFriendRequest(user.id)}>
-                          Add
+                          Hinzufügen
                         </button>
                       ) : null}
                     </div>
@@ -451,17 +486,17 @@ export default function ProfilePage() {
 
       {profileCard ? (
         <div className="modal-overlay" onClick={() => setProfileCard(null)}>
-          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+          <div ref={profileModalRef} role="dialog" aria-modal="true" aria-labelledby="profile-card-title" tabIndex={-1} className="modal-card" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-center gap-3">
               <Avatar user={profileCard} size={56} sessionToken={token} />
               <div>
-                <h2 className="text-lg font-semibold text-slate-100">{profileCard.fullName}</h2>
+                <h2 id="profile-card-title" className="text-lg font-semibold text-slate-100">{profileCard.fullName}</h2>
                 <p className="surface-muted text-sm">@{profileCard.username}</p>
                 <span className={`mt-1 inline-flex ${roleBadgeClass(profileCard.role)}`}>{roleLabel(profileCard.role)}</span>
               </div>
             </div>
             <p className="mt-4 whitespace-pre-wrap text-sm text-slate-100">{profileCard.bio || 'Keine Bio gesetzt.'}</p>
-            {profileCard.email ? <p className="surface-muted mt-2 text-xs">Email: {profileCard.email}</p> : null}
+            {profileCard.email ? <p className="surface-muted mt-2 text-xs">E-Mail: {profileCard.email}</p> : null}
 
             <div className="mt-4 flex gap-2">
               <button className="btn-soft text-xs" onClick={() => void startDirect(profileCard.id)}>
@@ -469,7 +504,7 @@ export default function ProfilePage() {
               </button>
               {!profileCard.isFriend ? (
                 <button className="btn-soft text-xs" onClick={() => void sendFriendRequest(profileCard.id)}>
-                  Freund hinzufuegen
+                  Freund hinzufügen
                 </button>
               ) : null}
             </div>
@@ -477,13 +512,13 @@ export default function ProfilePage() {
             {me.role === 'superadmin' ? (
               <div className="mt-4 grid grid-cols-3 gap-2">
                 <button className="btn-soft text-xs" onClick={() => void changeGlobalRole(profileCard.id, 'user')}>
-                  set user
+                  Als Nutzer setzen
                 </button>
                 <button className="btn-soft text-xs" onClick={() => void changeGlobalRole(profileCard.id, 'admin')}>
-                  set admin
+                  Als Admin setzen
                 </button>
                 <button className="btn-soft text-xs" onClick={() => void changeGlobalRole(profileCard.id, 'superadmin')}>
-                  set superadmin
+                  Als Superadmin setzen
                 </button>
               </div>
             ) : null}

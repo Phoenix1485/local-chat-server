@@ -68,7 +68,7 @@ export default function AdminTokenClient() {
 
         <div className="mt-5 space-y-3">
           <label className="block space-y-1">
-            <span className="surface-muted text-sm">Admin-Key (fuer das erste Token)</span>
+            <span className="surface-muted text-sm">Admin-Key (für das erste Token)</span>
             <input
               value={adminKey}
               onChange={(event) => setAdminKey(event.target.value)}

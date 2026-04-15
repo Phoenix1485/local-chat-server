@@ -120,7 +120,7 @@ function toTransform(target: MotionTarget): string | undefined {
 
 function toEaseValue(ease?: EasingValue): string {
   if (!ease) {
-    return 'cubic-bezier(0.22, 0.85, 0.33, 1)';
+    return 'cubic-bezier(0.16, 1, 0.3, 1)';
   }
   if (typeof ease === 'string') {
     return EASE_MAP[ease] ?? ease;
@@ -129,7 +129,7 @@ function toEaseValue(ease?: EasingValue): string {
     const [x1, y1, x2, y2] = ease;
     return `cubic-bezier(${x1}, ${y1}, ${x2}, ${y2})`;
   }
-  return 'cubic-bezier(0.22, 0.85, 0.33, 1)';
+  return 'cubic-bezier(0.16, 1, 0.3, 1)';
 }
 
 function mergeStyles(
@@ -160,11 +160,11 @@ function mergeStyles(
   }
 
   if (transition) {
-    const duration = typeof transition.duration === 'number' ? transition.duration : 0.35;
+    const duration = typeof transition.duration === 'number' ? transition.duration : 0.42;
     const delay = typeof transition.delay === 'number' ? transition.delay : 0;
     next.transition = `all ${duration}s ${toEaseValue(transition.ease)} ${delay}s`;
   } else {
-    next.transition = next.transition ?? 'all 0.35s cubic-bezier(0.22, 0.85, 0.33, 1)';
+    next.transition = next.transition ?? 'all 0.42s cubic-bezier(0.16, 1, 0.3, 1)';
   }
   return next;
 }

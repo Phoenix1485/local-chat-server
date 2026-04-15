@@ -36,14 +36,14 @@ export default function AdminPage() {
         payload && typeof payload === 'object' && 'error' in payload ? String(payload.error) : null;
       if (response.status === 401) {
         throw new Error(
-          serverError ?? 'Unauthorized. Token ist ungueltig/abgelaufen oder Vercel ADMIN_KEY passt nicht.'
+          serverError ?? 'Nicht autorisiert. Token ist ungültig/abgelaufen oder Vercel ADMIN_KEY passt nicht.'
         );
       }
       throw new Error(serverError ?? `Admin-Status konnte nicht geladen werden (${response.status}).`);
     }
 
     if (!payload || typeof payload !== 'object') {
-      throw new Error('Admin-Statusantwort ungueltig.');
+      throw new Error('Admin-Statusantwort ungültig.');
     }
 
     return payload as AdminSnapshot;
@@ -245,14 +245,14 @@ export default function AdminPage() {
 
     const selected = mode === 'selected' ? selectedUserIds : [];
     if (mode === 'selected' && selected.length === 0) {
-      setError('Bitte mindestens einen Account auswaehlen.');
+      setError('Bitte mindestens einen Account auswählen.');
       return;
     }
 
     const confirmed =
       mode === 'all'
-        ? window.confirm('Wirklich ALLE Accounts loeschen? Diese Aktion ist nicht rueckgaengig.')
-        : window.confirm(`Wirklich ${selected.length} ausgewaehlte Accounts loeschen?`);
+        ? window.confirm('Wirklich ALLE Accounts löschen? Diese Aktion ist nicht rückgängig.')
+        : window.confirm(`Wirklich ${selected.length} ausgewählte Accounts löschen?`);
 
     if (!confirmed) {
       return;
@@ -275,7 +275,7 @@ export default function AdminPage() {
       });
 
       if (!response.ok) {
-        throw new Error(await readServerError(response, 'Accounts konnten nicht geloescht werden.'));
+        throw new Error(await readServerError(response, 'Accounts konnten nicht gelöscht werden.'));
       }
 
       if (mode === 'all') {
@@ -288,7 +288,7 @@ export default function AdminPage() {
       const next = await fetchSnapshot(activeToken);
       setSnapshot(next);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Accounts konnten nicht geloescht werden.');
+      setError(requestError instanceof Error ? requestError.message : 'Accounts konnten nicht gelöscht werden.');
     } finally {
       setIsUpdating(false);
     }
@@ -371,13 +371,14 @@ export default function AdminPage() {
   };
 
   return (
-    <main className="space-y-4">
+    <main className="space-y-4" aria-busy={isConnecting || isUpdating}>
       <section className="glass-panel rounded-2xl p-4">
         <h1 className="text-xl font-semibold">Admin-Panel</h1>
         <p className="surface-muted mt-1 text-sm">Mit Admin-Token verbinden, um Warteschlange und Entscheidungen live zu verwalten.</p>
 
         <div className="mt-4 flex flex-col gap-2 sm:flex-row">
           <input
+            aria-label="Admin-Token eingeben"
             value={adminTokenInput}
             onChange={(event) => setAdminTokenInput(event.target.value)}
             className="glass-input flex-1 text-sm"
@@ -412,7 +413,7 @@ export default function AdminPage() {
           </button>
         </div>
         <p className="surface-muted mt-3 text-xs">
-          Neues Token noetig? Zu{' '}
+          Neues Token nötig? Zu{' '}
           <Link href="/admin/token" className="text-cyan-300 underline hover:text-cyan-200">
             /admin/token
           </Link>
@@ -427,7 +428,7 @@ export default function AdminPage() {
         {isConnecting ? (
           <p className="alert-info mt-3 rounded-md px-3 py-2 text-sm">Verbinde und lade Live-Daten...</p>
         ) : null}
-        {error ? <p className="alert-error mt-3 rounded-md px-3 py-2 text-sm">{error}</p> : null}
+        {error ? <p role="alert" aria-live="assertive" className="alert-error mt-3 rounded-md px-3 py-2 text-sm">{error}</p> : null}
       </section>
 
       {snapshot ? <section className="glass-panel rounded-2xl p-4">
@@ -498,14 +499,14 @@ export default function AdminPage() {
               </div>
             </li>
           ))}
-          {blacklist.length === 0 ? <li className="surface-muted text-sm">Keine Blacklist-Eintraege vorhanden.</li> : null}
+          {blacklist.length === 0 ? <li className="surface-muted text-sm">Keine Blacklist-Einträge vorhanden.</li> : null}
         </ul>
       </section> : null}
 
       {snapshot ? <section className="glass-panel rounded-2xl p-4">
-        <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">Accounts loeschen</h2>
+        <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">Accounts löschen</h2>
         <p className="surface-muted mt-1 text-sm">
-          Waehle einen, mehrere oder alle Accounts aus und loesche sie direkt.
+          Wähle einen, mehrere oder alle Accounts aus und lösche sie direkt.
         </p>
 
         <select
@@ -531,7 +532,7 @@ export default function AdminPage() {
             onClick={() => setSelectedUserIds(allUsers.map((user) => user.id))}
             className="btn-soft disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Alle auswaehlen
+            Alle auswählen
           </button>
           <button
             type="button"
@@ -549,7 +550,7 @@ export default function AdminPage() {
             }}
             className="btn-soft btn-danger disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Ausgewaehlte loeschen ({selectedUserIds.length})
+            Ausgewählte löschen ({selectedUserIds.length})
           </button>
           <button
             type="button"
@@ -559,7 +560,7 @@ export default function AdminPage() {
             }}
             className="btn-soft btn-danger-soft disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Alle Accounts loeschen ({allUsers.length})
+            Alle Accounts löschen ({allUsers.length})
           </button>
         </div>
       </section> : null}
@@ -649,7 +650,7 @@ export default function AdminPage() {
                 <div>
                   <p className="text-sm font-semibold text-slate-100">{chat.name}</p>
                   <p className="text-xs text-slate-400">
-                    {chat.isGlobal ? 'Global' : 'Aktiv'} - Mitglieder: {chat.membersCount}
+                    {chat.isGlobal ? 'Global-Chat' : 'Aktiv'} - Mitglieder: {chat.membersCount}
                   </p>
                 </div>
               </div>
@@ -666,7 +667,7 @@ export default function AdminPage() {
                 <div>
                   <p className="text-sm font-semibold text-slate-100">{chat.name}</p>
                   <p className="text-xs text-slate-400">
-                    Deactivated: {chat.deactivatedAt ? new Date(chat.deactivatedAt).toLocaleString() : 'n/a'}
+                    Deaktiviert: {chat.deactivatedAt ? new Date(chat.deactivatedAt).toLocaleString() : 'k. A.'}
                     {chat.deactivatedByName ? ` von ${chat.deactivatedByName}` : ''}
                   </p>
                 </div>

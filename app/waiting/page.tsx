@@ -75,7 +75,7 @@ function WaitingPageContent() {
           applyStatus(payload.status);
           setError(null);
         } catch {
-          setError('Status-Antwort ungueltig.');
+          setError('Status-Antwort ungültig.');
         }
       });
 
@@ -142,7 +142,7 @@ function WaitingPageContent() {
             <StatusPill status={status} />
           </div>
 
-          {status === 'pending' ? <p className="surface-muted mt-3 text-sm">Bitte halte diesen Tab geoeffnet.</p> : null}
+          {status === 'pending' ? <p className="surface-muted mt-3 text-sm">Bitte halte diesen Tab geöffnet.</p> : null}
           {status === 'approved' ? <p className="mt-3 text-sm text-emerald-300">Freigegeben. Weiterleitung zum Chat...</p> : null}
           {status === 'rejected' ? <p className="mt-3 text-sm text-rose-300">Deine Anfrage wurde vom Admin abgelehnt.</p> : null}
           {error ? <p className="mt-3 text-sm text-rose-300">{error}</p> : null}
@@ -153,7 +153,7 @@ function WaitingPageContent() {
           onClick={() => router.push('/')}
           className="btn-soft mt-6"
         >
-          Zurueck zur Anfrage
+          Zurück zur Anfrage
         </button>
       </section>
     </main>
