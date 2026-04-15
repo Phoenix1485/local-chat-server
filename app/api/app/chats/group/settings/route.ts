@@ -13,6 +13,7 @@ type GroupSettingsPayload = {
   everyoneMentionPolicy?: 'everyone' | 'admins' | 'owner';
   hereMentionPolicy?: 'everyone' | 'admins' | 'owner';
   autoHideAfter24h?: boolean;
+  messageCooldownMs?: number;
 };
 
 export async function POST(request: Request): Promise<Response> {
@@ -62,12 +63,16 @@ export async function POST(request: Request): Promise<Response> {
       if (!hereMentionPolicy || !['everyone', 'admins', 'owner'].includes(hereMentionPolicy)) {
         return jsonError('Invalid hereMentionPolicy.', 422);
       }
+      if (typeof payload.messageCooldownMs !== 'number' || !Number.isFinite(payload.messageCooldownMs) || payload.messageCooldownMs < 0) {
+        return jsonError('Invalid messageCooldownMs.', 422);
+      }
       const settings = await socialStore.updateGroupSettings(auth.session.user.id, chatId, {
         inviteMode,
         invitePolicy,
         everyoneMentionPolicy,
         hereMentionPolicy,
-        autoHideAfter24h: payload.autoHideAfter24h === true
+        autoHideAfter24h: payload.autoHideAfter24h === true,
+        messageCooldownMs: payload.messageCooldownMs
       });
       return Response.json({ settings });
     }

@@ -85,6 +85,7 @@ type GroupChatControlRow = RowDataPacket & {
   group_here_mention_policy: GroupMentionPolicy;
   group_invite_code: string | null;
   group_auto_hide_24h: number;
+  group_message_cooldown_ms: number;
 };
 
 type ChatMemberRow = RowDataPacket & {
@@ -338,6 +339,17 @@ export class MessageSpamError extends Error {
   }
 }
 
+export class MessageCooldownError extends Error {
+  readonly retryAfterMs: number;
+
+  constructor(retryAfterMs: number) {
+    const retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
+    super(`Bitte warte ${retryAfterSeconds}s, bevor du erneut in diese Gruppe schreibst.`);
+    this.name = 'MessageCooldownError';
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
 export class IpRestrictedError extends Error {
   readonly statusCode: number;
   readonly retryAfterMs: number | null;
@@ -423,6 +435,10 @@ function mapBlacklistEntry(row: BlacklistEntryRow): BlacklistEntry {
     createdAt: asNumber(row.created_at),
     updatedAt: asNumber(row.updated_at)
   };
+}
+
+function normalizeGroupMessageCooldownMs(value: number): number {
+  return Math.max(0, Math.min(CHAT_LIMITS.maxGroupMessageCooldownMs, Math.floor(value)));
 }
 
 function mapIpBlacklistEntry(row: IpBlacklistEntryRow): IpBlacklistEntry {
@@ -837,12 +853,7 @@ export class SocialStore {
       [normalized, email]
     );
 
-    const row = rows[0] ?? null;
-    if (!row || row.user_status !== 'approved') {
-      return null;
-    }
-
-    return row;
+    return rows[0] ?? null;
   }
 
   private async findBlacklistMatch(options: {
@@ -1326,6 +1337,130 @@ export class SocialStore {
     throw new MessageSpamError(blockedUntil - now);
   }
 
+  private async enforceGroupMessageCooldown(
+    userId: string,
+    chatId: string,
+    chatType: 'global' | 'group' | 'direct',
+    memberRole: GroupMemberRole,
+    accountRole: GlobalRole,
+    cooldownMs: number,
+    now = Date.now()
+  ): Promise<void> {
+    if (chatType !== 'group') {
+      return;
+    }
+
+    if (accountRole === 'admin' || accountRole === 'superadmin') {
+      return;
+    }
+
+    if (memberRole === 'owner' || memberRole === 'admin') {
+      return;
+    }
+
+    const effectiveCooldownMs = normalizeGroupMessageCooldownMs(cooldownMs);
+    if (effectiveCooldownMs <= 0) {
+      return;
+    }
+
+    const pool = getMysqlPool();
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `
+        SELECT created_at
+        FROM messages
+        WHERE chat_id = ?
+          AND user_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+      `,
+      [chatId, userId]
+    );
+
+    const lastCreatedAt = asNumber(rows[0]?.created_at, 0);
+    if (!lastCreatedAt) {
+      return;
+    }
+
+    const retryAfterMs = effectiveCooldownMs - (now - lastCreatedAt);
+    if (retryAfterMs > 0) {
+      throw new MessageCooldownError(retryAfterMs);
+    }
+  }
+
+  private async findDuplicateRecentMessage(
+    userId: string,
+    chatId: string,
+    now: number,
+    payload: {
+      text: string;
+      replyToMessageId: string | null;
+      attachmentIds: string[];
+      gifUrl: string | null;
+      pollQuestion: string | null;
+      pollOptions: string[];
+    }
+  ): Promise<MessageRow | null> {
+    const pool = getMysqlPool();
+    const [rows] = await pool.query<MessageRow[]>(
+      `
+        SELECT
+          m.id,
+          m.chat_id,
+          m.user_id,
+          m.text,
+          m.created_at,
+          m.attachments_json,
+          a.username,
+          a.first_name,
+          a.last_name,
+          a.bio,
+          a.email,
+          a.global_role,
+          a.avatar_updated_at
+        FROM messages m
+        JOIN auth_accounts a ON a.user_id = m.user_id
+        WHERE m.chat_id = ?
+          AND m.user_id = ?
+          AND m.created_at >= ?
+        ORDER BY m.created_at DESC
+        LIMIT 6
+      `,
+      [chatId, userId, now - CHAT_LIMITS.duplicateMessageWindowMs]
+    );
+
+    for (const row of rows) {
+      const meta = parseMessageMeta(row.attachments_json);
+      const rowReplyToId = meta.replyTo?.id ?? null;
+      const rowAttachmentIds = (meta.attachments ?? []).map((attachment) => attachment.id).sort();
+      const rowGifUrl = meta.gif?.url ?? null;
+      const rowPollQuestion = meta.poll?.question ?? null;
+      const rowPollOptions = (meta.poll?.options ?? []).map((option) => option.text).sort();
+
+      if (row.text !== payload.text) {
+        continue;
+      }
+      if (rowReplyToId !== payload.replyToMessageId) {
+        continue;
+      }
+      if (rowGifUrl !== payload.gifUrl) {
+        continue;
+      }
+      if (rowPollQuestion !== payload.pollQuestion) {
+        continue;
+      }
+      if (rowAttachmentIds.length !== payload.attachmentIds.length || rowAttachmentIds.some((value, index) => value !== payload.attachmentIds[index])) {
+        continue;
+      }
+      if (rowPollOptions.length !== payload.pollOptions.length || rowPollOptions.some((value, index) => value !== payload.pollOptions[index])) {
+        continue;
+      }
+
+      return row;
+    }
+
+    return null;
+  }
+
   async setTyping(userId: string, chatId: string, isTyping: boolean): Promise<void> {
     const role = await this.getMembershipRole(userId, chatId);
     if (!role) {
@@ -1632,7 +1767,7 @@ export class SocialStore {
     lastName: string;
     ip: string;
     userAgent: string;
-  }): Promise<{ token: string; session: UserSessionContext }> {
+  }): Promise<{ userId: string; status: 'pending' }> {
     await this.ensureReady();
     const pool = getMysqlPool();
     const now = Date.now();
@@ -1724,7 +1859,7 @@ export class SocialStore {
     await pool.query<ResultSetHeader>(
       `
         INSERT INTO users (id, name, status, created_at, updated_at, ip)
-        VALUES (?, ?, 'approved', ?, ?, ?)
+        VALUES (?, ?, 'pending', ?, ?, ?)
       `,
       [userId, displayName.slice(0, 64), now, now, ipNorm]
     );
@@ -1764,9 +1899,10 @@ export class SocialStore {
         now
       ]
     );
-    await this.ensureGlobalMembership(userId, now);
-
-    return this.createSession(userId, input.userAgent);
+    return {
+      userId,
+      status: 'pending'
+    };
   }
 
   async loginAccount(input: {
@@ -1787,6 +1923,14 @@ export class SocialStore {
     }
 
     await this.assertAccountAllowed(account);
+
+    if (account.user_status === 'pending') {
+      throw new Error('Dein Account wartet noch auf Freigabe.');
+    }
+
+    if (account.user_status !== 'approved') {
+      throw new Error('Dein Account ist derzeit nicht freigegeben.');
+    }
 
     const isValid = verifyPassword(input.password, account.password_hash);
     if (!isValid) {
@@ -1852,6 +1996,9 @@ export class SocialStore {
     }
 
     await this.assertAccountAllowed(account);
+    if (account.user_status !== 'approved') {
+      return null;
+    }
 
     const now = Date.now();
     const token = createSessionToken();
@@ -1873,6 +2020,28 @@ export class SocialStore {
     );
 
     return token;
+  }
+
+  async getUserStatus(userId: string): Promise<'pending' | 'approved' | 'rejected' | null> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `
+        SELECT status
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [userId]
+    );
+
+    const status = String(rows[0]?.status ?? '').trim();
+    if (status === 'pending' || status === 'approved' || status === 'rejected') {
+      return status;
+    }
+
+    return null;
   }
 
   async resetPassword(token: string, newPassword: string, ip: string): Promise<boolean> {
@@ -2292,7 +2461,8 @@ export class SocialStore {
           group_everyone_mention_policy,
           group_here_mention_policy,
           group_invite_code,
-          group_auto_hide_24h
+          group_auto_hide_24h,
+          group_message_cooldown_ms
         FROM chats
         WHERE id = ?
         LIMIT 1
@@ -2347,6 +2517,7 @@ export class SocialStore {
         ? `/chat?inviteCode=${encodeURIComponent(chat.group_invite_code)}`
         : null,
       autoHideAfter24h: asNumber(chat.group_auto_hide_24h) === 1,
+      messageCooldownMs: normalizeGroupMessageCooldownMs(asNumber(chat.group_message_cooldown_ms, CHAT_LIMITS.defaultGroupMessageCooldownMs)),
       canInviteDirectly: canManageUsers && inviteMode === 'direct' && this.canInviteDirectly(role, invitePolicy),
       canManageUsers,
       canManageSettings,
@@ -2722,6 +2893,7 @@ export class SocialStore {
       everyoneMentionPolicy: GroupMentionPolicy;
       hereMentionPolicy: GroupMentionPolicy;
       autoHideAfter24h: boolean;
+      messageCooldownMs: number;
     }
   ): Promise<AppGroupSettings> {
     await this.ensureReady();
@@ -2741,6 +2913,7 @@ export class SocialStore {
     const invitePolicy = toGroupInvitePolicy(input.invitePolicy);
     const everyoneMentionPolicy = toGroupMentionPolicy(input.everyoneMentionPolicy);
     const hereMentionPolicy = toGroupMentionPolicy(input.hereMentionPolicy);
+    const messageCooldownMs = normalizeGroupMessageCooldownMs(input.messageCooldownMs);
     let inviteCode = chat.group_invite_code?.trim() || null;
     if (inviteMode === 'invite_link' && !inviteCode) {
       inviteCode = createGroupInviteCode();
@@ -2755,6 +2928,7 @@ export class SocialStore {
           group_everyone_mention_policy = ?,
           group_here_mention_policy = ?,
           group_auto_hide_24h = ?,
+          group_message_cooldown_ms = ?,
           group_invite_code = ?,
           group_invite_code_updated_at = CASE
             WHEN ? IS NULL THEN group_invite_code_updated_at
@@ -2769,6 +2943,7 @@ export class SocialStore {
         everyoneMentionPolicy,
         hereMentionPolicy,
         input.autoHideAfter24h ? 1 : 0,
+        messageCooldownMs,
         inviteCode,
         inviteCode,
         now,
@@ -2782,7 +2957,8 @@ export class SocialStore {
         invitePolicy,
         everyoneMentionPolicy,
         hereMentionPolicy,
-        autoHideAfter24h: input.autoHideAfter24h
+        autoHideAfter24h: input.autoHideAfter24h,
+        messageCooldownMs
       }
     });
 
@@ -3369,7 +3545,8 @@ export class SocialStore {
           name,
           chat_type,
           group_everyone_mention_policy,
-          group_here_mention_policy
+          group_here_mention_policy,
+          group_message_cooldown_ms
         FROM chats
         WHERE id = ?
           AND deactivated_at IS NULL
@@ -3382,6 +3559,9 @@ export class SocialStore {
       throw new Error('Chat not found.');
     }
     const chatType = chatRow.chat_type === 'global' || chatRow.chat_type === 'direct' ? chatRow.chat_type : 'group';
+    const groupMessageCooldownMs = normalizeGroupMessageCooldownMs(
+      asNumber(chatRow.group_message_cooldown_ms, CHAT_LIMITS.defaultGroupMessageCooldownMs)
+    );
 
     try {
       await this.enforceMessageSpamProtection(userId, chatId, now);
@@ -3391,6 +3571,8 @@ export class SocialStore {
       }
       throw error;
     }
+
+    await this.enforceGroupMessageCooldown(userId, chatId, chatType, role, account.global_role, groupMessageCooldownMs, now);
 
     const attachmentIds = normalizeIds(input.attachmentIds ?? []).slice(0, 8);
     let attachments: AppChatAttachment[] = [];
@@ -3478,6 +3660,22 @@ export class SocialStore {
     if (!messageText && attachments.length === 0 && !storedPoll && !gifInput) {
       throw new Error('Message cannot be empty.');
     }
+
+    const duplicate = await this.findDuplicateRecentMessage(userId, chatId, now, {
+      text: messageText,
+      replyToMessageId: replyToMessageId || null,
+      attachmentIds: attachments.map((attachment) => attachment.id).sort(),
+      gifUrl: gifInput?.url ?? null,
+      pollQuestion: storedPoll?.question ?? null,
+      pollOptions: (storedPoll?.options ?? []).map((option) => option.text).sort()
+    });
+    if (duplicate) {
+      const existing = await this.mapRowToMessage(duplicate, userId);
+      if (existing) {
+        return existing;
+      }
+    }
+
     const mentionUserIds = await this.resolveMentionUserIds(
       chatId,
       chatType,

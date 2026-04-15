@@ -79,6 +79,20 @@ export async function requireSession(request: Request): Promise<
     };
   }
 
+  const status = await socialStore.getUserStatus(session.user.id);
+  if (status !== 'approved') {
+    const message =
+      status === 'pending'
+        ? 'Account is pending approval.'
+        : status === 'rejected'
+          ? 'Account is not approved.'
+          : 'Account not found.';
+    return {
+      ok: false,
+      response: jsonError(message, 403)
+    };
+  }
+
   return {
     ok: true,
     session,

@@ -1,6 +1,6 @@
 import { requireSession } from '@/lib/appAuth';
 import { enforceSameOrigin, getClientIp, isUuid, jsonError } from '@/lib/http';
-import { IpRestrictedError, MessageSpamError, socialStore } from '@/lib/socialStore';
+import { IpRestrictedError, MessageCooldownError, MessageSpamError, socialStore } from '@/lib/socialStore';
 import { findFirstTenorUrl, resolveTenorGifFromInput, stripTenorUrlFromText } from '@/lib/tenor';
 import { validateMessage, validatePollOptions, validatePollQuestion } from '@/lib/validation';
 
@@ -126,6 +126,21 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ message });
   } catch (error) {
     if (error instanceof MessageSpamError) {
+      return Response.json(
+        {
+          error: error.message,
+          retryAfterMs: error.retryAfterMs
+        },
+        {
+          status: 429,
+          headers: {
+            'Cache-Control': 'no-store',
+            'Retry-After': String(Math.max(1, Math.ceil(error.retryAfterMs / 1000)))
+          }
+        }
+      );
+    }
+    if (error instanceof MessageCooldownError) {
       return Response.json(
         {
           error: error.message,

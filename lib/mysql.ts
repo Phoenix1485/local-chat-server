@@ -139,6 +139,7 @@ async function createSchema(): Promise<void> {
       group_invite_code VARCHAR(64) NULL,
       group_invite_code_updated_at BIGINT NULL,
       group_auto_hide_24h TINYINT(1) NOT NULL DEFAULT 0,
+      group_message_cooldown_ms INT NOT NULL DEFAULT 1000,
       dm_key VARCHAR(80) NULL,
       deactivated_at BIGINT NULL,
       deactivated_by CHAR(36) NULL,
@@ -527,6 +528,13 @@ async function createSchema(): Promise<void> {
     `,
     [GLOBAL_CHAT_ID, now]
   );
+
+  if (!(await hasColumn(pool, 'chats', 'group_message_cooldown_ms'))) {
+    await pool.query(`
+      ALTER TABLE chats
+      ADD COLUMN group_message_cooldown_ms INT NOT NULL DEFAULT 1000
+    `);
+  }
 }
 
 export async function ensureMysqlSchema(): Promise<void> {

@@ -1,4 +1,3 @@
-import { createSessionCookie } from '@/lib/appAuth';
 import { enforceSameOrigin, getClientIp, jsonError } from '@/lib/http';
 import { socialStore } from '@/lib/socialStore';
 import { validateEmail, validatePassword, validateUsername } from '@/lib/validation';
@@ -63,18 +62,11 @@ export async function POST(request: Request): Promise<Response> {
       userAgent: request.headers.get('user-agent') ?? ''
     });
 
-    return Response.json(
-      {
-        token: created.token,
-        session: created.session
-      },
-      {
-        headers: {
-          'Set-Cookie': createSessionCookie(created.token, created.session.tokenExpiresAt),
-          'Cache-Control': 'no-store'
-        }
-      }
-    );
+    return Response.json({
+      ok: true,
+      status: created.status,
+      userId: created.userId
+    });
   } catch (error) {
     return jsonError(error instanceof Error ? error.message : 'Registration failed.', 422);
   }

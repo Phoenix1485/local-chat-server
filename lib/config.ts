@@ -22,7 +22,10 @@ export const CHAT_LIMITS = {
   spamLongWindowLimit: parsePositiveInt(process.env.CHAT_SPAM_LONG_WINDOW_LIMIT, 12),
   spamShortCooldownMs: parsePositiveInt(process.env.CHAT_SPAM_SHORT_COOLDOWN_MS, 15_000),
   spamMediumCooldownMs: parsePositiveInt(process.env.CHAT_SPAM_MEDIUM_COOLDOWN_MS, 45_000),
-  spamLongCooldownMs: parsePositiveInt(process.env.CHAT_SPAM_LONG_COOLDOWN_MS, 120_000)
+  spamLongCooldownMs: parsePositiveInt(process.env.CHAT_SPAM_LONG_COOLDOWN_MS, 120_000),
+  defaultGroupMessageCooldownMs: parsePositiveInt(process.env.CHAT_DEFAULT_GROUP_MESSAGE_COOLDOWN_MS, 1_000),
+  maxGroupMessageCooldownMs: parsePositiveInt(process.env.CHAT_MAX_GROUP_MESSAGE_COOLDOWN_MS, 60_000),
+  duplicateMessageWindowMs: parsePositiveInt(process.env.CHAT_DUPLICATE_MESSAGE_WINDOW_MS, 5_000)
 } as const;
 
 export const APP_LIMITS = {

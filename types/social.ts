@@ -158,6 +158,7 @@ export type AppGroupSettings = {
   inviteCode: string | null;
   inviteLink: string | null;
   autoHideAfter24h: boolean;
+  messageCooldownMs: number;
   canInviteDirectly: boolean;
   canManageUsers: boolean;
   canManageSettings: boolean;

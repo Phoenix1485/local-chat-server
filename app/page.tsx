@@ -55,8 +55,10 @@ export default function AuthPage() {
       .then(() => {
         router.replace('/chat');
       })
-      .catch(() => {
+      .catch((requestError) => {
         localStorage.removeItem(TOKEN_KEY);
+        setInfo(null);
+        setError(requestError instanceof Error ? requestError.message : null);
       });
   }, [router]);
 
@@ -98,13 +100,13 @@ export default function AuthPage() {
         body: JSON.stringify({ username, password, firstName, lastName, email })
       });
 
-      const token = String(payload.token ?? '');
-      if (!token) {
+      const status = String(payload.status ?? '');
+      if (status !== 'pending') {
         throw new Error('Registrierung fehlgeschlagen.');
       }
-
-      localStorage.setItem(TOKEN_KEY, token);
-      router.push('/chat');
+      setInfo('Account erstellt. Status ist jetzt pending und muss erst von dir im Admin-Panel freigegeben werden.');
+      setMode('login');
+      setPassword('');
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Registrierung fehlgeschlagen.');
     } finally {

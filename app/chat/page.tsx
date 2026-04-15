@@ -221,9 +221,19 @@ function getActiveMentionDraft(text: string): { startIndex: number; query: strin
   return { startIndex, query: query.trimStart() };
 }
 
-function extractMentionTokens(text: string): Array<{ value: string; start: number; end: number }> {
+function extractMentionTokens(text: string, candidates: string[]): Array<{ value: string; start: number; end: number }> {
   const out: Array<{ value: string; start: number; end: number }> = [];
-  const regex = /(^|\s)@([A-Za-z0-9_.-]+)/g;
+  const normalizedCandidates = [...new Set(
+    candidates
+      .map((candidate) => candidate.trim())
+      .filter((candidate) => candidate.length > 0)
+  )].sort((left, right) => right.length - left.length);
+  if (normalizedCandidates.length === 0) {
+    return out;
+  }
+
+  const candidatePattern = normalizedCandidates.map((candidate) => escapeRegExp(candidate)).join('|');
+  const regex = new RegExp(`(^|\\s)@(${candidatePattern})(?=$|\\s|[.,!?;:])`, 'gi');
   let match: RegExpExecArray | null;
   while ((match = regex.exec(text)) !== null) {
     const prefix = match[1] ?? '';
@@ -334,7 +344,10 @@ async function api(path: string, token: string, init?: RequestInit) {
   const payload = contentType.includes('application/json') ? await response.json().catch(() => null) : null;
   if (!response.ok) {
     const message = payload && typeof payload === 'object' && 'error' in payload ? String(payload.error) : 'Anfrage fehlgeschlagen.';
-    throw new Error(message);
+    const error = new Error(message) as Error & { status?: number; payload?: unknown };
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
   }
 
   return payload;
@@ -460,6 +473,7 @@ export default function ChatPage() {
   const [groupEveryoneMentionPolicyDraft, setGroupEveryoneMentionPolicyDraft] = useState<GroupMentionPolicy>('admins');
   const [groupHereMentionPolicyDraft, setGroupHereMentionPolicyDraft] = useState<GroupMentionPolicy>('admins');
   const [groupAutoHide24hDraft, setGroupAutoHide24hDraft] = useState(false);
+  const [groupMessageCooldownMsDraft, setGroupMessageCooldownMsDraft] = useState(1000);
   const [ownershipTargetUserId, setOwnershipTargetUserId] = useState('');
   const [groupInviteCodeInput, setGroupInviteCodeInput] = useState('');
   const [text, setText] = useState('');
@@ -506,6 +520,7 @@ export default function ChatPage() {
   const typingActiveRef = useRef(false);
   const typingIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mentionAudioRef = useRef<AudioContext | null>(null);
+  const sendMessageInFlightRef = useRef(false);
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
   const inviteCodeInputRef = useRef<HTMLInputElement | null>(null);
   const messageSearchInputRef = useRef<HTMLInputElement | null>(null);
@@ -1429,13 +1444,19 @@ export default function ChatPage() {
   };
 
   const renderMessageText = (messageText: string): ReactNode => {
-    const tokens = extractMentionTokens(messageText);
+    const byUsername = new Map(members.map((member) => [member.user.username.toLowerCase(), member.user]));
+    const byFullName = new Map(members.map((member) => [member.user.fullName.toLowerCase().replace(/\s+/g, ''), member.user]));
+    const mentionCandidates = [
+      'everyone',
+      'everone',
+      'here',
+      ...members.flatMap((member) => [member.user.username, member.user.fullName])
+    ];
+    const tokens = extractMentionTokens(messageText, mentionCandidates);
     if (tokens.length === 0) {
       return messageText;
     }
 
-    const byUsername = new Map(members.map((member) => [member.user.username.toLowerCase(), member.user]));
-    const byFullName = new Map(members.map((member) => [member.user.fullName.toLowerCase().replace(/\s+/g, ''), member.user]));
     const fragments: ReactNode[] = [];
     let cursor = 0;
 
@@ -1829,6 +1850,7 @@ export default function ChatPage() {
   const sendMessage = async (event: FormEvent) => {
     event.preventDefault();
     if (!token || !activeChatId) return;
+    if (sendMessageInFlightRef.current) return;
     const trimmed = text.trim();
     if (editingMessageId) {
       if (!trimmed) {
@@ -1875,6 +1897,7 @@ export default function ChatPage() {
     };
 
     setError(null);
+    sendMessageInFlightRef.current = true;
     try {
       await sendPayload(requestPayload);
       setText('');
@@ -1893,8 +1916,15 @@ export default function ChatPage() {
         void setTypingState(false);
       }
     } catch (requestError) {
-      setPendingSendQueue((prev) => [...prev, requestPayload]);
+      const status = requestError && typeof requestError === 'object' && 'status' in requestError
+        ? Number((requestError as { status?: number }).status)
+        : undefined;
+      if (status === undefined || status >= 500) {
+        setPendingSendQueue((prev) => [...prev, requestPayload]);
+      }
       setError(requestError instanceof Error ? requestError.message : 'Nachricht fehlgeschlagen.');
+    } finally {
+      sendMessageInFlightRef.current = false;
     }
   };
 
@@ -2020,6 +2050,7 @@ export default function ChatPage() {
     setGroupEveryoneMentionPolicyDraft(groupSettings.everyoneMentionPolicy);
     setGroupHereMentionPolicyDraft(groupSettings.hereMentionPolicy);
     setGroupAutoHide24hDraft(groupSettings.autoHideAfter24h);
+    setGroupMessageCooldownMsDraft(groupSettings.messageCooldownMs);
     setOwnershipTargetUserId('');
     setFinderQuery('');
     setGroupOverviewTab('overview');
@@ -2059,7 +2090,8 @@ export default function ChatPage() {
           invitePolicy: groupInvitePolicyDraft,
           everyoneMentionPolicy: groupEveryoneMentionPolicyDraft,
           hereMentionPolicy: groupHereMentionPolicyDraft,
-          autoHideAfter24h: groupAutoHide24hDraft
+          autoHideAfter24h: groupAutoHide24hDraft,
+          messageCooldownMs: Math.max(0, Math.floor(groupMessageCooldownMsDraft))
         })
       });
       await loadContext(token, activeChatId);
@@ -3297,6 +3329,20 @@ export default function ChatPage() {
                   <label className="flex items-center gap-2 rounded-md border border-slate-700/70 bg-slate-900/45 px-3 py-2 text-sm text-slate-200">
                     <input type="checkbox" checked={groupAutoHide24hDraft} onChange={(event) => setGroupAutoHide24hDraft(event.target.checked)} />
                     Nachrichten nach 24h für alle ausblenden (DB bleibt erhalten)
+                  </label>
+
+                  <label className="block space-y-1">
+                    <span className="surface-muted text-xs uppercase tracking-wide">Nachrichten-Cooldown in ms</span>
+                    <input
+                      className="glass-input text-sm"
+                      type="number"
+                      min={0}
+                      max={60000}
+                      step={100}
+                      value={groupMessageCooldownMsDraft}
+                      onChange={(event) => setGroupMessageCooldownMsDraft(Number.parseInt(event.target.value || '0', 10) || 0)}
+                    />
+                    <p className="surface-muted text-xs">Standard ist 1000ms. Gilt nur für normale Mitglieder, nicht für globale Admins/Superadmins oder Gruppen-Admins.</p>
                   </label>
 
                   <button className="btn-primary text-sm" type="button" onClick={() => void saveGroupSettings()} disabled={isBusy}>
