@@ -12,6 +12,7 @@ import type {
   AppChatContext,
   AppChatGif,
   AppChatMessage,
+  AppChatReadReceipt,
   AppGroupSettings,
   AppModerationLog,
   AppUserProfile,
@@ -30,20 +31,6 @@ function initials(user: Pick<AppUserProfile, 'firstName' | 'lastName' | 'usernam
   const b = user.lastName?.[0] ?? '';
   const value = `${a}${b}`.trim();
   return value || user.username.slice(0, 2).toUpperCase();
-}
-
-function initialsFromFullName(fullName: string): string {
-  const parts = fullName
-    .trim()
-    .split(/\s+/)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-  if (parts.length === 0) {
-    return '??';
-  }
-  const first = parts[0]?.[0] ?? '';
-  const last = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? '' : '';
-  return `${first}${last}`.toUpperCase();
 }
 
 function avatarUrl(user: Pick<AppUserProfile, 'id' | 'avatarUpdatedAt'>, sessionToken?: string): string {
@@ -108,6 +95,51 @@ const EMOJI_CATEGORIES: Array<{ key: string; label: string; emojis: string[] }> 
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function isSameCalendarDay(leftTs: number, rightTs: number): boolean {
+  const left = new Date(leftTs);
+  const right = new Date(rightTs);
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
+}
+
+function formatDayDivider(ts: number): string {
+  const target = new Date(ts);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  if (isSameCalendarDay(target.getTime(), today.getTime())) {
+    return 'Heute';
+  }
+  if (isSameCalendarDay(target.getTime(), yesterday.getTime())) {
+    return 'Gestern';
+  }
+
+  return target.toLocaleDateString('de-DE', {
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+    year: target.getFullYear() === today.getFullYear() ? undefined : 'numeric'
+  });
+}
+
+function receiptAvatarUser(receipt: AppChatReadReceipt): AppUserProfile {
+  return {
+    id: receipt.userId,
+    username: receipt.username,
+    firstName: '',
+    lastName: '',
+    fullName: receipt.fullName,
+    bio: '',
+    email: null,
+    avatarUpdatedAt: receipt.avatarUpdatedAt,
+    role: 'user'
+  };
 }
 
 function escapeRegExp(value: string): string {
@@ -2142,9 +2174,11 @@ export default function ChatPage() {
           </div>
 
           <motion.div className="message-list" onClick={() => setActionMenuMessageId(null)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3, delay: 0.2 }}>
-            {filteredMessages.map((message) => {
+            {filteredMessages.map((message, index) => {
               const isMe = message.user.id === me.id;
               const isUnreadStart = firstUnreadMessageId === message.id && unreadCountAtOpen > 0;
+              const previousMessage = index > 0 ? filteredMessages[index - 1] : null;
+              const startsNewDay = !previousMessage || !isSameCalendarDay(previousMessage.createdAt, message.createdAt);
               const canEdit = isMe && !message.deletedForAll;
               const allowDeleteForAll = canDeleteForAll(message);
               const displayText = message.deletedForAll ? 'Nachricht wurde geloescht.' : message.text;
@@ -2165,6 +2199,11 @@ export default function ChatPage() {
 
               return (
                 <motion.div id={`chat-msg-${message.id}`} key={message.id} initial={{ opacity: 0, y: 10, scale: 0.992 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.25 }}>
+                  {startsNewDay ? (
+                    <div className="unread-separator">
+                      <span>{formatDayDivider(message.createdAt)}</span>
+                    </div>
+                  ) : null}
                   {isUnreadStart ? (
                     <div ref={firstUnreadRef} className="unread-separator">
                       <span>Ungelesene Nachrichten ({unreadCountAtOpen})</span>
@@ -2319,7 +2358,7 @@ export default function ChatPage() {
                             <div className="msg-read-chips">
                               {message.readBy.slice(-10).map((receipt) => (
                                 <span key={`${message.id}-${receipt.userId}-${receipt.readAt}`} className="msg-read-chip">
-                                  {initialsFromFullName(receipt.fullName)}
+                                  <Avatar user={receiptAvatarUser(receipt)} size={18} sessionToken={token} />
                                   <span className="msg-read-tooltip">
                                     {receipt.fullName} · {formatTime(receipt.readAt)}
                                   </span>
@@ -2328,13 +2367,13 @@ export default function ChatPage() {
                             </div>
                           </div>
                         ) : (
-                          <p className="msg-read-direct">Zugestellt</p>
+                          <p className="msg-read-direct">Gesendet</p>
                         )
                       ) : null}
 
                       {isMe && !message.deletedForAll && isDirectChat ? (
                         <p className="msg-read-direct">
-                          {latestReadAt ? `Gelesen ${formatTime(latestReadAt)}` : 'Zugestellt'}
+                          {latestReadAt ? 'Gelesen' : 'Gesendet'}
                         </p>
                       ) : null}
                     </motion.div>
@@ -3215,4 +3254,3 @@ export default function ChatPage() {
     </>
   );
 }
-

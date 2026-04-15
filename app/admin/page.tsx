@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AdminSnapshot } from '@/types/chat';
+import type { AdminBlacklistEntry, AdminSnapshot } from '@/types/chat';
 import { StatusPill } from '@/components/StatusPill';
 
 export default function AdminPage() {
@@ -13,6 +13,9 @@ export default function AdminPage() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  const [blacklistKind, setBlacklistKind] = useState<'name' | 'email'>('name');
+  const [blacklistValue, setBlacklistValue] = useState('');
+  const [blacklistNote, setBlacklistNote] = useState('');
 
   const fetchSnapshot = useCallback(async (token: string): Promise<AdminSnapshot> => {
     const response = await fetch('/api/admin/state', {
@@ -143,6 +146,7 @@ export default function AdminPage() {
   const activeChats = snapshot?.activeChats ?? [];
   const deactivatedChats = snapshot?.deactivatedChats ?? [];
   const allUsers = snapshot?.users ?? [];
+  const blacklist = snapshot?.blacklist ?? [];
   const pendingCount = useMemo(() => pendingUsers.length, [pendingUsers.length]);
 
   useEffect(() => {
@@ -290,6 +294,82 @@ export default function AdminPage() {
     }
   };
 
+  const addBlacklistEntry = async () => {
+    if (!activeToken) {
+      setError('Admin-Token fehlt.');
+      return;
+    }
+
+    const value = blacklistValue.trim();
+    if (!value) {
+      setError('Bitte einen Namen oder eine E-Mail eintragen.');
+      return;
+    }
+
+    setIsUpdating(true);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/admin/blacklist', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-token': activeToken
+        },
+        body: JSON.stringify({
+          kind: blacklistKind,
+          value,
+          note: blacklistNote.trim() || null
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(await readServerError(response, 'Blacklist-Eintrag konnte nicht gespeichert werden.'));
+      }
+
+      setBlacklistValue('');
+      setBlacklistNote('');
+      const next = await fetchSnapshot(activeToken);
+      setSnapshot(next);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Blacklist-Eintrag konnte nicht gespeichert werden.');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const removeBlacklistEntry = async (entry: AdminBlacklistEntry) => {
+    if (!activeToken) {
+      setError('Admin-Token fehlt.');
+      return;
+    }
+
+    setIsUpdating(true);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/admin/blacklist', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-token': activeToken
+        },
+        body: JSON.stringify({ id: entry.id })
+      });
+
+      if (!response.ok) {
+        throw new Error(await readServerError(response, 'Blacklist-Eintrag konnte nicht geloescht werden.'));
+      }
+
+      const next = await fetchSnapshot(activeToken);
+      setSnapshot(next);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Blacklist-Eintrag konnte nicht geloescht werden.');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   return (
     <main className="space-y-4">
       <section className="glass-panel rounded-2xl p-4">
@@ -349,6 +429,78 @@ export default function AdminPage() {
         ) : null}
         {error ? <p className="alert-error mt-3 rounded-md px-3 py-2 text-sm">{error}</p> : null}
       </section>
+
+      {snapshot ? <section className="glass-panel rounded-2xl p-4">
+        <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">Blacklist</h2>
+        <p className="surface-muted mt-1 text-sm">
+          Namen und E-Mail-Adressen werden in der DB gespeichert und blockieren Registrierung, Login, Reset und Profil-Updates.
+        </p>
+
+        <div className="mt-3 grid gap-2 md:grid-cols-[140px_1fr]">
+          <select
+            value={blacklistKind}
+            onChange={(event) => setBlacklistKind(event.target.value === 'email' ? 'email' : 'name')}
+            className="glass-input text-sm"
+          >
+            <option value="name">Name</option>
+            <option value="email">E-Mail</option>
+          </select>
+          <input
+            value={blacklistValue}
+            onChange={(event) => setBlacklistValue(event.target.value)}
+            className="glass-input text-sm"
+            placeholder={blacklistKind === 'email' ? 'z.B. test@example.com' : 'z.B. spammer oder Max Mustermann'}
+          />
+        </div>
+
+        <textarea
+          value={blacklistNote}
+          onChange={(event) => setBlacklistNote(event.target.value)}
+          className="glass-input mt-2 min-h-[84px] text-sm"
+          placeholder="Optionale Admin-Notiz"
+        />
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={isUpdating}
+            onClick={() => {
+              void addBlacklistEntry();
+            }}
+            className="btn-soft btn-danger disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Eintrag speichern
+          </button>
+        </div>
+
+        <ul className="mt-4 space-y-2">
+          {blacklist.map((entry) => (
+            <li key={entry.id} className="glass-card rounded-lg p-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-100">{entry.value}</p>
+                  <p className="text-xs uppercase tracking-wide text-slate-400">{entry.kind === 'email' ? 'E-Mail' : 'Name'}</p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Aktualisiert: {new Date(entry.updatedAt).toLocaleString()}
+                  </p>
+                  {entry.note ? <p className="mt-2 text-sm text-slate-200">{entry.note}</p> : null}
+                </div>
+                <button
+                  type="button"
+                  disabled={isUpdating}
+                  onClick={() => {
+                    void removeBlacklistEntry(entry);
+                  }}
+                  className="btn-soft btn-danger px-2 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Entfernen
+                </button>
+              </div>
+            </li>
+          ))}
+          {blacklist.length === 0 ? <li className="surface-muted text-sm">Keine Blacklist-Eintraege vorhanden.</li> : null}
+        </ul>
+      </section> : null}
 
       {snapshot ? <section className="glass-panel rounded-2xl p-4">
         <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">Accounts loeschen</h2>

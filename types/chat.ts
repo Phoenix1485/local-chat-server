@@ -89,6 +89,7 @@ export type AdminSnapshot = {
   recentMessages: ChatMessage[];
   activeChats: AdminChatSummary[];
   deactivatedChats: AdminChatSummary[];
+  blacklist: AdminBlacklistEntry[];
 };
 
 export type AdminChatSummary = {
@@ -103,4 +104,13 @@ export type AdminChatSummary = {
   deactivatedBy: string | null;
   deactivatedByName: string | null;
   membersCount: number;
+};
+
+export type AdminBlacklistEntry = {
+  id: string;
+  kind: 'name' | 'email';
+  value: string;
+  note: string | null;
+  createdAt: number;
+  updatedAt: number;
 };

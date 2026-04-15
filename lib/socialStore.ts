@@ -138,6 +138,22 @@ type FriendProfileRow = RowDataPacket & {
   avatar_updated_at: number | null;
 };
 
+type BlacklistEntryRow = RowDataPacket & {
+  id: string;
+  kind: 'name' | 'email';
+  value: string;
+  value_norm: string;
+  note: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
+type MessageSpamBlockRow = RowDataPacket & {
+  blocked_until: number;
+  strike_count: number;
+  last_triggered_at: number;
+};
+
 type GroupModerationLogRow = RowDataPacket & {
   id: string;
   chat_id: string;
@@ -247,6 +263,33 @@ type AddMessageInput = {
   } | null;
 };
 
+type BlacklistKind = 'name' | 'email';
+
+type BlacklistEntry = {
+  id: string;
+  kind: BlacklistKind;
+  value: string;
+  note: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+type BlacklistMatch = {
+  kind: BlacklistKind;
+  value: string;
+};
+
+export class MessageSpamError extends Error {
+  readonly retryAfterMs: number;
+
+  constructor(retryAfterMs: number) {
+    const retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
+    super(`Du sendest gerade zu schnell. Warte bitte ${retryAfterSeconds}s.`);
+    this.name = 'MessageSpamError';
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
 function asNumber(value: unknown, fallback = 0): number {
   if (typeof value === 'number') {
     return value;
@@ -272,6 +315,33 @@ function sortFriendPair(a: string, b: string): { low: string; high: string } {
 
 function normalizeIds(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))];
+}
+
+function normalizeBlacklistValue(kind: BlacklistKind, value: string): string {
+  const trimmed = value.trim();
+  if (kind === 'email') {
+    return normalizeEmail(trimmed);
+  }
+  return trimmed.replace(/\s+/g, ' ').toLowerCase();
+}
+
+function normalizeBlacklistNameCandidates(values: Array<string | null | undefined>): string[] {
+  const normalized = values
+    .map((value) => value?.trim() ?? '')
+    .filter((value) => value.length > 0)
+    .map((value) => normalizeBlacklistValue('name', value));
+  return [...new Set(normalized)];
+}
+
+function mapBlacklistEntry(row: BlacklistEntryRow): BlacklistEntry {
+  return {
+    id: row.id,
+    kind: row.kind,
+    value: row.value,
+    note: row.note,
+    createdAt: asNumber(row.created_at),
+    updatedAt: asNumber(row.updated_at)
+  };
 }
 
 function toGroupInviteMode(value: unknown): GroupInviteMode {
@@ -667,6 +737,79 @@ export class SocialStore {
     return row;
   }
 
+  private async findBlacklistMatch(options: {
+    names?: Array<string | null | undefined>;
+    email?: string | null | undefined;
+  }): Promise<BlacklistMatch | null> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const checks: Array<{ kind: BlacklistKind; value: string }> = [];
+
+    for (const value of normalizeBlacklistNameCandidates(options.names ?? [])) {
+      checks.push({ kind: 'name', value });
+    }
+
+    const normalizedEmail = options.email?.trim() ? normalizeBlacklistValue('email', options.email) : '';
+    if (normalizedEmail) {
+      checks.push({ kind: 'email', value: normalizedEmail });
+    }
+
+    if (checks.length === 0) {
+      return null;
+    }
+
+    const conditions = checks.map(() => '(kind = ? AND value_norm = ?)').join(' OR ');
+    const params = checks.flatMap((entry) => [entry.kind, entry.value]);
+    const [rows] = await pool.query<BlacklistEntryRow[]>(
+      `
+        SELECT id, kind, value, value_norm, note, created_at, updated_at
+        FROM app_blacklist_entries
+        WHERE ${conditions}
+        LIMIT 1
+      `,
+      params
+    );
+
+    const row = rows[0];
+    return row ? { kind: row.kind, value: row.value } : null;
+  }
+
+  private async assertAllowedIdentity(options: {
+    username?: string | null | undefined;
+    firstName?: string | null | undefined;
+    lastName?: string | null | undefined;
+    email?: string | null | undefined;
+  }): Promise<void> {
+    const fullName = `${options.firstName?.trim() ?? ''} ${options.lastName?.trim() ?? ''}`.trim();
+    const match = await this.findBlacklistMatch({
+      names: [options.username, options.firstName, options.lastName, fullName],
+      email: options.email
+    });
+
+    if (!match) {
+      return;
+    }
+
+    if (match.kind === 'email') {
+      throw new Error('Diese E-Mail-Adresse ist gesperrt.');
+    }
+    throw new Error('Dieser Name ist gesperrt.');
+  }
+
+  private async assertAccountAllowed(account: {
+    username: string;
+    first_name: string;
+    last_name: string;
+    email: string | null;
+  }): Promise<void> {
+    await this.assertAllowedIdentity({
+      username: account.username,
+      firstName: account.first_name,
+      lastName: account.last_name,
+      email: account.email
+    });
+  }
+
   private async cleanupExpiredSessions(now = Date.now()): Promise<void> {
     await this.ensureReady();
     const pool = getMysqlPool();
@@ -835,6 +978,7 @@ export class SocialStore {
           userId: member.id,
           fullName: member.fullName,
           username: member.username,
+          avatarUpdatedAt: member.avatarUpdatedAt,
           readAt
         });
       }
@@ -858,6 +1002,91 @@ export class SocialStore {
   private async mapRowToMessage(row: MessageRow, viewerUserId: string): Promise<AppChatMessage | null> {
     const receiptsByMessageId = await this.getChatReadReceiptsByMessageId(row.chat_id, [row]);
     return buildMessage(row, viewerUserId, receiptsByMessageId.get(row.id) ?? []);
+  }
+
+  private async enforceMessageSpamProtection(userId: string, chatId: string, now = Date.now()): Promise<void> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+
+    const [blockRows] = await pool.query<MessageSpamBlockRow[]>(
+      `
+        SELECT blocked_until, strike_count, last_triggered_at
+        FROM message_spam_blocks
+        WHERE user_id = ?
+          AND chat_id = ?
+        LIMIT 1
+      `,
+      [userId, chatId]
+    );
+    const currentBlock = blockRows[0];
+    if (currentBlock && asNumber(currentBlock.blocked_until) > now) {
+      throw new MessageSpamError(asNumber(currentBlock.blocked_until) - now);
+    }
+
+    const shortWindowStart = now - CHAT_LIMITS.spamShortWindowMs;
+    const mediumWindowStart = now - CHAT_LIMITS.spamMediumWindowMs;
+    const longWindowStart = now - CHAT_LIMITS.spamLongWindowMs;
+
+    const [countRows] = await pool.query<RowDataPacket[]>(
+      `
+        SELECT
+          SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS short_count,
+          SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS medium_count,
+          SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS long_count
+        FROM messages
+        WHERE chat_id = ?
+          AND user_id = ?
+          AND created_at >= ?
+      `,
+      [shortWindowStart, mediumWindowStart, longWindowStart, chatId, userId, longWindowStart]
+    );
+    const counts = countRows[0] ?? {};
+    const shortCount = asNumber(counts.short_count, 0);
+    const mediumCount = asNumber(counts.medium_count, 0);
+    const longCount = asNumber(counts.long_count, 0);
+
+    let cooldownMs = 0;
+    if (longCount >= CHAT_LIMITS.spamLongWindowLimit) {
+      cooldownMs = CHAT_LIMITS.spamLongCooldownMs;
+    } else if (mediumCount >= CHAT_LIMITS.spamMediumWindowLimit) {
+      cooldownMs = CHAT_LIMITS.spamMediumCooldownMs;
+    } else if (shortCount >= CHAT_LIMITS.spamShortWindowLimit) {
+      cooldownMs = CHAT_LIMITS.spamShortCooldownMs;
+    }
+
+    if (cooldownMs <= 0) {
+      if (currentBlock && asNumber(currentBlock.blocked_until) <= now) {
+        await pool.query<ResultSetHeader>(
+          'DELETE FROM message_spam_blocks WHERE user_id = ? AND chat_id = ? AND blocked_until <= ?',
+          [userId, chatId, now]
+        );
+      }
+      return;
+    }
+
+    const previousStrikeCount = currentBlock ? asNumber(currentBlock.strike_count, 0) : 0;
+    const previousTriggeredAt = currentBlock ? asNumber(currentBlock.last_triggered_at, 0) : 0;
+    const nextStrikeCount =
+      previousTriggeredAt > 0 && now - previousTriggeredAt <= CHAT_LIMITS.spamLongWindowMs ? previousStrikeCount + 1 : 1;
+    const escalatedCooldownMs = Math.min(
+      CHAT_LIMITS.spamLongCooldownMs,
+      cooldownMs + Math.max(0, nextStrikeCount - 1) * 10_000
+    );
+    const blockedUntil = now + escalatedCooldownMs;
+
+    await pool.query<ResultSetHeader>(
+      `
+        INSERT INTO message_spam_blocks (user_id, chat_id, blocked_until, strike_count, last_triggered_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          blocked_until = GREATEST(blocked_until, VALUES(blocked_until)),
+          strike_count = VALUES(strike_count),
+          last_triggered_at = VALUES(last_triggered_at)
+      `,
+      [userId, chatId, blockedUntil, nextStrikeCount, now]
+    );
+
+    throw new MessageSpamError(blockedUntil - now);
   }
 
   async setTyping(userId: string, chatId: string, isTyping: boolean): Promise<void> {
@@ -1175,6 +1404,13 @@ export class SocialStore {
     const email = input.email?.trim() ? input.email.trim() : null;
     const emailNorm = email ? normalizeEmail(email) : null;
 
+    await this.assertAllowedIdentity({
+      username,
+      firstName: input.firstName,
+      lastName: input.lastName,
+      email
+    });
+
     const [existingRows] = await pool.query<RowDataPacket[]>(
       'SELECT 1 FROM auth_accounts WHERE username_norm = ? OR (email_norm IS NOT NULL AND email_norm = ?) LIMIT 1',
       [usernameNorm, emailNorm]
@@ -1249,6 +1485,8 @@ export class SocialStore {
       return null;
     }
 
+    await this.assertAccountAllowed(account);
+
     const isValid = verifyPassword(input.password, account.password_hash);
     if (!isValid) {
       return null;
@@ -1307,6 +1545,8 @@ export class SocialStore {
       return null;
     }
 
+    await this.assertAccountAllowed(account);
+
     const now = Date.now();
     const token = createSessionToken();
     const tokenHash = hashToken(token);
@@ -1353,6 +1593,12 @@ export class SocialStore {
     if (!reset?.user_id || !reset?.id) {
       return false;
     }
+
+    const account = await this.getAccountByUserId(String(reset.user_id));
+    if (!account) {
+      return false;
+    }
+    await this.assertAccountAllowed(account);
 
     await pool.query<ResultSetHeader>('UPDATE auth_accounts SET password_hash = ?, updated_at = ? WHERE user_id = ?', [
       hashPassword(newPassword),
@@ -1489,6 +1735,12 @@ export class SocialStore {
     const email = input.email?.trim() ? input.email.trim() : null;
     const emailNorm = email ? normalizeEmail(email) : null;
     const displayName = `${firstName} ${lastName}`.trim();
+
+    await this.assertAllowedIdentity({
+      firstName,
+      lastName,
+      email
+    });
 
     if (emailNorm) {
       const [rows] = await pool.query<RowDataPacket[]>(
@@ -2816,6 +3068,8 @@ export class SocialStore {
     }
     const chatType = chatRow.chat_type === 'global' || chatRow.chat_type === 'direct' ? chatRow.chat_type : 'group';
 
+    await this.enforceMessageSpamProtection(userId, chatId, now);
+
     const attachmentIds = normalizeIds(input.attachmentIds ?? []).slice(0, 8);
     let attachments: AppChatAttachment[] = [];
     if (attachmentIds.length > 0) {
@@ -3297,6 +3551,61 @@ export class SocialStore {
     );
 
     return this.mapRowsToMessages(rows, viewerUserId);
+  }
+
+  async listBlacklistEntries(): Promise<BlacklistEntry[]> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const [rows] = await pool.query<BlacklistEntryRow[]>(
+      `
+        SELECT id, kind, value, value_norm, note, created_at, updated_at
+        FROM app_blacklist_entries
+        ORDER BY kind ASC, value ASC
+      `
+    );
+    return rows.map(mapBlacklistEntry);
+  }
+
+  async addBlacklistEntry(kind: BlacklistKind, value: string, note?: string | null): Promise<BlacklistEntry> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const normalizedValue = normalizeBlacklistValue(kind, value);
+    const displayValue = value.trim().replace(/\s+/g, ' ');
+    if (!normalizedValue || !displayValue) {
+      throw new Error('Blacklist-Wert ist leer.');
+    }
+
+    const now = Date.now();
+    const id = randomUUID();
+
+    await pool.query<ResultSetHeader>(
+      `
+        INSERT INTO app_blacklist_entries (id, kind, value, value_norm, note, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+      [id, kind, displayValue.slice(0, 190), normalizedValue.slice(0, 190), note?.trim().slice(0, 255) || null, now, now]
+    );
+
+    const [rows] = await pool.query<BlacklistEntryRow[]>(
+      `
+        SELECT id, kind, value, value_norm, note, created_at, updated_at
+        FROM app_blacklist_entries
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [id]
+    );
+    const entry = rows[0];
+    if (!entry) {
+      throw new Error('Blacklist-Eintrag konnte nicht geladen werden.');
+    }
+    return mapBlacklistEntry(entry);
+  }
+
+  async removeBlacklistEntry(id: string): Promise<void> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    await pool.query<ResultSetHeader>('DELETE FROM app_blacklist_entries WHERE id = ?', [id]);
   }
 
   async setGlobalRole(actorUserId: string, targetUserId: string, role: GlobalRole): Promise<void> {

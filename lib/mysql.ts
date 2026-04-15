@@ -322,6 +322,36 @@ async function createSchema(): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_blacklist_entries (
+      id CHAR(36) PRIMARY KEY,
+      kind ENUM('name','email') NOT NULL,
+      value VARCHAR(190) NOT NULL,
+      value_norm VARCHAR(190) NOT NULL,
+      note VARCHAR(255) NULL,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      UNIQUE KEY uq_app_blacklist_kind_value (kind, value_norm),
+      INDEX idx_app_blacklist_kind (kind),
+      INDEX idx_app_blacklist_updated (updated_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS message_spam_blocks (
+      user_id CHAR(36) NOT NULL,
+      chat_id CHAR(36) NOT NULL,
+      blocked_until BIGINT NOT NULL,
+      strike_count INT NOT NULL DEFAULT 0,
+      last_triggered_at BIGINT NOT NULL,
+      PRIMARY KEY (user_id, chat_id),
+      INDEX idx_message_spam_blocks_until (blocked_until),
+      INDEX idx_message_spam_blocks_chat (chat_id),
+      CONSTRAINT fk_message_spam_blocks_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_message_spam_blocks_chat FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS friendships (
       user_low CHAR(36) NOT NULL,
       user_high CHAR(36) NOT NULL,

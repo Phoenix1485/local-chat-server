@@ -13,7 +13,16 @@ export const CHAT_LIMITS = {
   deactivatedChatRetentionMs: 30 * 24 * 60 * 60 * 1000,
   sseKeepAliveMs: parsePositiveInt(process.env.CHAT_SSE_KEEP_ALIVE_MS, 15000),
   streamPollMs: parsePositiveInt(process.env.CHAT_STREAM_POLL_MS, 1400),
-  adminPollMs: parsePositiveInt(process.env.CHAT_ADMIN_POLL_MS, 2000)
+  adminPollMs: parsePositiveInt(process.env.CHAT_ADMIN_POLL_MS, 2000),
+  spamShortWindowMs: parsePositiveInt(process.env.CHAT_SPAM_SHORT_WINDOW_MS, 8_000),
+  spamShortWindowLimit: parsePositiveInt(process.env.CHAT_SPAM_SHORT_WINDOW_LIMIT, 5),
+  spamMediumWindowMs: parsePositiveInt(process.env.CHAT_SPAM_MEDIUM_WINDOW_MS, 20_000),
+  spamMediumWindowLimit: parsePositiveInt(process.env.CHAT_SPAM_MEDIUM_WINDOW_LIMIT, 8),
+  spamLongWindowMs: parsePositiveInt(process.env.CHAT_SPAM_LONG_WINDOW_MS, 45_000),
+  spamLongWindowLimit: parsePositiveInt(process.env.CHAT_SPAM_LONG_WINDOW_LIMIT, 12),
+  spamShortCooldownMs: parsePositiveInt(process.env.CHAT_SPAM_SHORT_COOLDOWN_MS, 15_000),
+  spamMediumCooldownMs: parsePositiveInt(process.env.CHAT_SPAM_MEDIUM_COOLDOWN_MS, 45_000),
+  spamLongCooldownMs: parsePositiveInt(process.env.CHAT_SPAM_LONG_COOLDOWN_MS, 120_000)
 } as const;
 
 export const APP_LIMITS = {

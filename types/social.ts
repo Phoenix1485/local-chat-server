@@ -85,6 +85,7 @@ export type AppChatReadReceipt = {
   userId: string;
   fullName: string;
   username: string;
+  avatarUpdatedAt: number | null;
   readAt: number;
 };
 

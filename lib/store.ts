@@ -1040,7 +1040,8 @@ class ChatStore {
       rejected,
       recentMessages,
       activeChats: chats.active,
-      deactivatedChats: chats.deactivated
+      deactivatedChats: chats.deactivated,
+      blacklist: []
     };
   }
 

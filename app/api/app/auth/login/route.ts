@@ -36,11 +36,16 @@ export async function POST(request: Request): Promise<Response> {
     return jsonError(passwordError, 422);
   }
 
-  const loggedIn = await socialStore.loginAccount({
-    identifier,
-    password,
-    userAgent: request.headers.get('user-agent') ?? ''
-  });
+  let loggedIn;
+  try {
+    loggedIn = await socialStore.loginAccount({
+      identifier,
+      password,
+      userAgent: request.headers.get('user-agent') ?? ''
+    });
+  } catch (error) {
+    return jsonError(error instanceof Error ? error.message : 'Login failed.', 403);
+  }
   if (!loggedIn) {
     return jsonError('Invalid credentials.', 401);
   }
@@ -58,4 +63,3 @@ export async function POST(request: Request): Promise<Response> {
     }
   );
 }
-

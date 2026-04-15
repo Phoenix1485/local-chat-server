@@ -26,16 +26,20 @@ export async function POST(request: Request): Promise<Response> {
     return jsonError('Identifier is required.', 422);
   }
 
-  const resetToken = await socialStore.requestPasswordReset(identifier);
-  return Response.json(
-    {
-      ok: true,
-      resetToken
-    },
-    {
-      headers: {
-        'Cache-Control': 'no-store'
+  try {
+    const resetToken = await socialStore.requestPasswordReset(identifier);
+    return Response.json(
+      {
+        ok: true,
+        resetToken
+      },
+      {
+        headers: {
+          'Cache-Control': 'no-store'
+        }
       }
-    }
-  );
+    );
+  } catch (error) {
+    return jsonError(error instanceof Error ? error.message : 'Reset request failed.', 403);
+  }
 }

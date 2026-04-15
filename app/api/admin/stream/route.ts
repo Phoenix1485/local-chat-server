@@ -1,6 +1,7 @@
 import { isAdminAuthorized } from '@/lib/adminAuth';
 import { CHAT_LIMITS } from '@/lib/config';
 import { jsonError } from '@/lib/http';
+import { socialStore } from '@/lib/socialStore';
 import { createSseResponse } from '@/lib/sse';
 import { chatStore } from '@/lib/store';
 
@@ -13,7 +14,15 @@ export async function GET(request: Request): Promise<Response> {
     return jsonError('Unauthorized.', 401);
   }
 
-  const initialSnapshot = await chatStore.getAdminSnapshot();
+  const loadSnapshot = async () => {
+    const [legacySnapshot, blacklist] = await Promise.all([chatStore.getAdminSnapshot(), socialStore.listBlacklistEntries()]);
+    return {
+      ...legacySnapshot,
+      blacklist
+    };
+  };
+
+  const initialSnapshot = await loadSnapshot();
 
   return createSseResponse(request, (send) => {
     let closed = false;
@@ -25,7 +34,7 @@ export async function GET(request: Request): Promise<Response> {
         return;
       }
 
-      const snapshot = await chatStore.getAdminSnapshot();
+      const snapshot = await loadSnapshot();
       const nextSerialized = JSON.stringify(snapshot);
       if (nextSerialized !== lastSnapshot) {
         lastSnapshot = nextSerialized;

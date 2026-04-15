@@ -35,7 +35,12 @@ export async function POST(request: Request): Promise<Response> {
     return jsonError(passwordError, 422);
   }
 
-  const ok = await socialStore.resetPassword(token, password);
+  let ok = false;
+  try {
+    ok = await socialStore.resetPassword(token, password);
+  } catch (error) {
+    return jsonError(error instanceof Error ? error.message : 'Password reset failed.', 403);
+  }
   if (!ok) {
     return jsonError('Reset token is invalid or expired.', 422);
   }

@@ -183,7 +183,7 @@ export default function AuthPage() {
         >
           <div>
             <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/80">Live Messaging</p>
-            <h1 className="mt-2 text-4xl font-semibold leading-tight text-white">Discord-Style Chat fuer deinen lokalen Server.</h1>
+            <h1 className="mt-2 text-4xl font-semibold leading-tight text-white">Discord-Style Chat für deinen lokalen Server.</h1>
             <p className="mt-4 max-w-md text-sm text-slate-200/90">
               Gruppen, DMs, Friends, Profile, Rollen und moderne Chat-UX in einem System.
             </p>
