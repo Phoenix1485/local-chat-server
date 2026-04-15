@@ -1,4 +1,4 @@
-import { enforceSameOrigin, jsonError } from '@/lib/http';
+import { enforceSameOrigin, getClientIp, jsonError } from '@/lib/http';
 import { socialStore } from '@/lib/socialStore';
 
 export const runtime = 'nodejs';
@@ -27,7 +27,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
-    const resetToken = await socialStore.requestPasswordReset(identifier);
+    const resetToken = await socialStore.requestPasswordReset(identifier, getClientIp(request));
     return Response.json(
       {
         ok: true,

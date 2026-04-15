@@ -11,9 +11,16 @@ export async function GET(request: Request): Promise<Response> {
     return jsonError('Unauthorized.', 401);
   }
 
-  const [legacySnapshot, blacklist] = await Promise.all([chatStore.getAdminSnapshot(), socialStore.listBlacklistEntries()]);
+  const [legacySnapshot, blacklist, ipBlacklist, ipAbuseFlags] = await Promise.all([
+    chatStore.getAdminSnapshot(),
+    socialStore.listBlacklistEntries(),
+    socialStore.listIpBlacklistEntries(),
+    socialStore.listIpAbuseFlags()
+  ]);
   return Response.json({
     ...legacySnapshot,
-    blacklist
+    blacklist,
+    ipBlacklist,
+    ipAbuseFlags
   });
 }

@@ -1041,7 +1041,9 @@ class ChatStore {
       recentMessages,
       activeChats: chats.active,
       deactivatedChats: chats.deactivated,
-      blacklist: []
+      blacklist: [],
+      ipBlacklist: [],
+      ipAbuseFlags: []
     };
   }
 

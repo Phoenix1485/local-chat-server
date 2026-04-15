@@ -341,6 +341,36 @@ async function createSchema(): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_ip_blacklist_entries (
+      id CHAR(36) PRIMARY KEY,
+      ip_norm VARCHAR(128) NOT NULL,
+      note VARCHAR(255) NULL,
+      forbid_register TINYINT(1) NOT NULL DEFAULT 1,
+      forbid_login TINYINT(1) NOT NULL DEFAULT 1,
+      forbid_reset TINYINT(1) NOT NULL DEFAULT 1,
+      forbid_chat TINYINT(1) NOT NULL DEFAULT 1,
+      terminate_sessions TINYINT(1) NOT NULL DEFAULT 1,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      UNIQUE KEY uq_app_ip_blacklist_ip_norm (ip_norm),
+      INDEX idx_app_ip_blacklist_updated (updated_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_ip_abuse_flags (
+      ip_norm VARCHAR(128) PRIMARY KEY,
+      strikes INT NOT NULL DEFAULT 0,
+      blocked_until BIGINT NULL,
+      last_reason VARCHAR(120) NULL,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      INDEX idx_app_ip_abuse_flags_blocked (blocked_until),
+      INDEX idx_app_ip_abuse_flags_updated (updated_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS message_spam_blocks (
       user_id CHAR(36) NOT NULL,
       chat_id CHAR(36) NOT NULL,

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { APP_LIMITS, CHAT_LIMITS, GLOBAL_CHAT_ID } from '@/lib/config';
 import { ensureMysqlSchema, getMysqlPool } from '@/lib/mysql';
+import { rateLimiter } from '@/lib/rateLimiter';
 import { createSessionToken, hashPassword, hashToken, normalizeEmail, normalizeUsername, verifyPassword } from '@/lib/security';
 import type {
   AppChatAttachment,
@@ -148,6 +149,28 @@ type BlacklistEntryRow = RowDataPacket & {
   updated_at: number;
 };
 
+type IpBlacklistEntryRow = RowDataPacket & {
+  id: string;
+  ip_norm: string;
+  note: string | null;
+  forbid_register: number;
+  forbid_login: number;
+  forbid_reset: number;
+  forbid_chat: number;
+  terminate_sessions: number;
+  created_at: number;
+  updated_at: number;
+};
+
+type IpAbuseFlagRow = RowDataPacket & {
+  ip_norm: string;
+  strikes: number;
+  blocked_until: number | null;
+  last_reason: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
 type MessageSpamBlockRow = RowDataPacket & {
   blocked_until: number;
   strike_count: number;
@@ -279,6 +302,31 @@ type BlacklistMatch = {
   value: string;
 };
 
+type IpRestrictionScope = {
+  forbidRegister: boolean;
+  forbidLogin: boolean;
+  forbidReset: boolean;
+  forbidChat: boolean;
+  terminateSessions: boolean;
+};
+
+type IpBlacklistEntry = {
+  id: string;
+  ip: string;
+  note: string | null;
+  scope: IpRestrictionScope;
+  createdAt: number;
+  updatedAt: number;
+};
+
+type IpAbuseFlag = {
+  ip: string;
+  strikes: number;
+  blockedUntil: number | null;
+  lastReason: string | null;
+  updatedAt: number;
+};
+
 export class MessageSpamError extends Error {
   readonly retryAfterMs: number;
 
@@ -286,6 +334,18 @@ export class MessageSpamError extends Error {
     const retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
     super(`Du sendest gerade zu schnell. Warte bitte ${retryAfterSeconds}s.`);
     this.name = 'MessageSpamError';
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+export class IpRestrictedError extends Error {
+  readonly statusCode: number;
+  readonly retryAfterMs: number | null;
+
+  constructor(message: string, statusCode = 403, retryAfterMs: number | null = null) {
+    super(message);
+    this.name = 'IpRestrictedError';
+    this.statusCode = statusCode;
     this.retryAfterMs = retryAfterMs;
   }
 }
@@ -333,6 +393,27 @@ function normalizeBlacklistNameCandidates(values: Array<string | null | undefine
   return [...new Set(normalized)];
 }
 
+function normalizeIp(value: string): string {
+  return value.trim().toLowerCase().slice(0, 128);
+}
+
+function normalizeDisplayName(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^a-zA-Z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function simplifyNameFingerprint(value: string): string {
+  return normalizeDisplayName(value)
+    .replace(/[0-9]/g, '')
+    .replace(/(.)\1+/g, '$1')
+    .replace(/\s+/g, '');
+}
+
 function mapBlacklistEntry(row: BlacklistEntryRow): BlacklistEntry {
   return {
     id: row.id,
@@ -341,6 +422,33 @@ function mapBlacklistEntry(row: BlacklistEntryRow): BlacklistEntry {
     note: row.note,
     createdAt: asNumber(row.created_at),
     updatedAt: asNumber(row.updated_at)
+  };
+}
+
+function mapIpBlacklistEntry(row: IpBlacklistEntryRow): IpBlacklistEntry {
+  return {
+    id: row.id,
+    ip: row.ip_norm,
+    note: row.note,
+    scope: {
+      forbidRegister: asNumber(row.forbid_register, 0) > 0,
+      forbidLogin: asNumber(row.forbid_login, 0) > 0,
+      forbidReset: asNumber(row.forbid_reset, 0) > 0,
+      forbidChat: asNumber(row.forbid_chat, 0) > 0,
+      terminateSessions: asNumber(row.terminate_sessions, 0) > 0
+    },
+    createdAt: asNumber(row.created_at),
+    updatedAt: asNumber(row.updated_at)
+  };
+}
+
+function mapIpAbuseFlag(row: IpAbuseFlagRow): IpAbuseFlag {
+  return {
+    ip: row.ip_norm,
+    strikes: asNumber(row.strikes, 0),
+    blockedUntil: asNullableNumber(row.blocked_until),
+    lastReason: row.last_reason ?? null,
+    updatedAt: asNumber(row.updated_at, 0)
   };
 }
 
@@ -808,6 +916,135 @@ export class SocialStore {
       lastName: account.last_name,
       email: account.email
     });
+  }
+
+  private async getIpBlacklistEntry(ip: string): Promise<IpBlacklistEntryRow | null> {
+    await this.ensureReady();
+    const ipNorm = normalizeIp(ip);
+    if (!ipNorm || ipNorm === 'unknown') {
+      return null;
+    }
+    const pool = getMysqlPool();
+    const [rows] = await pool.query<IpBlacklistEntryRow[]>(
+      `
+        SELECT id, ip_norm, note, forbid_register, forbid_login, forbid_reset, forbid_chat, terminate_sessions, created_at, updated_at
+        FROM app_ip_blacklist_entries
+        WHERE ip_norm = ?
+        LIMIT 1
+      `,
+      [ipNorm]
+    );
+    return rows[0] ?? null;
+  }
+
+  private async terminateSessionsForIp(ip: string): Promise<void> {
+    await this.ensureReady();
+    const ipNorm = normalizeIp(ip);
+    if (!ipNorm || ipNorm === 'unknown') {
+      return;
+    }
+    const pool = getMysqlPool();
+    await pool.query<ResultSetHeader>(
+      `
+        DELETE s
+        FROM auth_sessions s
+        JOIN users u ON u.id = s.user_id
+        WHERE LOWER(u.ip) = ?
+      `,
+      [ipNorm]
+    );
+  }
+
+  private async assertIpAllowed(ip: string, action: 'register' | 'login' | 'reset' | 'chat'): Promise<void> {
+    const entry = await this.getIpBlacklistEntry(ip);
+    if (!entry) {
+      return;
+    }
+    const scope = mapIpBlacklistEntry(entry).scope;
+    const blocked =
+      (action === 'register' && scope.forbidRegister) ||
+      (action === 'login' && scope.forbidLogin) ||
+      (action === 'reset' && scope.forbidReset) ||
+      (action === 'chat' && scope.forbidChat);
+    if (!blocked) {
+      return;
+    }
+    if (scope.terminateSessions) {
+      await this.terminateSessionsForIp(ip);
+    }
+    throw new IpRestrictedError('Diese IP-Adresse ist für diese Aktion gesperrt.', 403);
+  }
+
+  private async registerIpAbuse(ip: string, reason: string, strikeDelta = 1): Promise<void> {
+    await this.ensureReady();
+    const ipNorm = normalizeIp(ip);
+    if (!ipNorm || ipNorm === 'unknown') {
+      return;
+    }
+    const pool = getMysqlPool();
+    const now = Date.now();
+    const windowStart = now - APP_LIMITS.abuseStrikeWindowMs;
+    const [rows] = await pool.query<IpAbuseFlagRow[]>(
+      `
+        SELECT ip_norm, strikes, blocked_until, last_reason, created_at, updated_at
+        FROM app_ip_abuse_flags
+        WHERE ip_norm = ?
+        LIMIT 1
+      `,
+      [ipNorm]
+    );
+    const existing = rows[0] ?? null;
+    const nextStrikes = existing && asNumber(existing.updated_at, 0) >= windowStart
+      ? asNumber(existing.strikes, 0) + Math.max(1, strikeDelta)
+      : Math.max(1, strikeDelta);
+    const blockedUntil = nextStrikes >= APP_LIMITS.abuseStrikeAutoBlockThreshold ? now + APP_LIMITS.abuseCooldownMs : null;
+
+    await pool.query<ResultSetHeader>(
+      `
+        INSERT INTO app_ip_abuse_flags (ip_norm, strikes, blocked_until, last_reason, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          strikes = VALUES(strikes),
+          blocked_until = VALUES(blocked_until),
+          last_reason = VALUES(last_reason),
+          updated_at = VALUES(updated_at)
+      `,
+      [ipNorm, nextStrikes, blockedUntil, reason.slice(0, 120), now, now]
+    );
+
+    if (blockedUntil) {
+      await this.addIpBlacklistEntry(
+        ipNorm,
+        {
+          forbidRegister: true,
+          forbidLogin: true,
+          forbidReset: true,
+          forbidChat: true,
+          terminateSessions: true
+        },
+        `Auto block: ${reason.slice(0, 80)}`
+      );
+      await this.terminateSessionsForIp(ipNorm);
+    }
+  }
+
+  private async enforceIpRateLimit(
+    ip: string,
+    keySuffix: string,
+    limit: number,
+    windowMs: number,
+    reason: string
+  ): Promise<void> {
+    const ipNorm = normalizeIp(ip);
+    if (!ipNorm || ipNorm === 'unknown') {
+      return;
+    }
+    const result = await rateLimiter.check(`ip:${ipNorm}:${keySuffix}`, limit, windowMs);
+    if (result.ok) {
+      return;
+    }
+    await this.registerIpAbuse(ipNorm, reason, 2);
+    throw new IpRestrictedError('Zu viele Anfragen von dieser IP-Adresse. Bitte warte kurz.', 429, result.resetInMs);
   }
 
   private async cleanupExpiredSessions(now = Date.now()): Promise<void> {
@@ -1403,6 +1640,14 @@ export class SocialStore {
     const usernameNorm = normalizeUsername(username);
     const email = input.email?.trim() ? input.email.trim() : null;
     const emailNorm = email ? normalizeEmail(email) : null;
+    const ipNorm = normalizeIp(input.ip);
+    const displayName = `${input.firstName.trim()} ${input.lastName.trim()}`.trim() || username;
+    const displayNameNorm = normalizeDisplayName(displayName);
+    const fingerprint = simplifyNameFingerprint(displayName);
+
+    await this.assertIpAllowed(ipNorm, 'register');
+    await this.enforceIpRateLimit(ipNorm, 'register', APP_LIMITS.registerIpLimit, APP_LIMITS.registerIpWindowMs, 'register-rate');
+    await this.enforceIpRateLimit(ipNorm, 'register-daily', APP_LIMITS.registerIpDailyLimit, 24 * 60 * 60 * 1000, 'register-daily');
 
     await this.assertAllowedIdentity({
       username,
@@ -1419,20 +1664,55 @@ export class SocialStore {
       throw new Error('Username or email already exists.');
     }
 
+    const [sameNameRows] = await pool.query<RowDataPacket[]>(
+      `
+        SELECT 1
+        FROM users
+        WHERE LOWER(TRIM(name)) = ?
+        LIMIT 1
+      `,
+      [displayNameNorm]
+    );
+    if (sameNameRows.length > 0) {
+      await this.registerIpAbuse(ipNorm, 'duplicate-display-name');
+      throw new Error('Dieser vollständige Name existiert bereits.');
+    }
+
+    const [ipRecentRows] = await pool.query<RowDataPacket[]>(
+      `
+        SELECT a.username, a.first_name, a.last_name
+        FROM users u
+        JOIN auth_accounts a ON a.user_id = u.id
+        WHERE LOWER(u.ip) = ?
+          AND u.created_at >= ?
+        ORDER BY u.created_at DESC
+        LIMIT 100
+      `,
+      [ipNorm, now - 24 * 60 * 60 * 1000]
+    );
+    for (const row of ipRecentRows) {
+      const existingFingerprint = simplifyNameFingerprint(
+        `${String(row.first_name ?? '')} ${String(row.last_name ?? '')}`.trim() || String(row.username ?? '')
+      );
+      if (existingFingerprint && fingerprint && existingFingerprint === fingerprint) {
+        await this.registerIpAbuse(ipNorm, 'name-variation-abuse', 3);
+        throw new Error('Zu viele ähnliche Accounts von derselben IP-Adresse.');
+      }
+    }
+
     const [countRows] = await pool.query<CountRow[]>('SELECT COUNT(*) AS total FROM auth_accounts');
     const totalAccounts = asNumber(countRows[0]?.total, 0);
     const role: GlobalRole = totalAccounts === 0 ? 'superadmin' : 'user';
 
     const userId = randomUUID();
     const passwordHash = hashPassword(input.password);
-    const displayName = `${input.firstName.trim()} ${input.lastName.trim()}`.trim() || username;
 
     await pool.query<ResultSetHeader>(
       `
         INSERT INTO users (id, name, status, created_at, updated_at, ip)
         VALUES (?, ?, 'approved', ?, ?, ?)
       `,
-      [userId, displayName.slice(0, 64), now, now, input.ip.slice(0, 128)]
+      [userId, displayName.slice(0, 64), now, now, ipNorm]
     );
 
     await pool.query<ResultSetHeader>(
@@ -1479,9 +1759,16 @@ export class SocialStore {
     identifier: string;
     password: string;
     userAgent: string;
+    ip: string;
   }): Promise<{ token: string; session: UserSessionContext } | null> {
+    const ipNorm = normalizeIp(input.ip);
+    await this.assertIpAllowed(ipNorm, 'login');
+    await this.enforceIpRateLimit(ipNorm, 'login', APP_LIMITS.loginIpLimit, APP_LIMITS.loginIpWindowMs, 'login-rate');
+    await this.enforceIpRateLimit(ipNorm, 'login-burst', APP_LIMITS.loginIpBurstLimit, APP_LIMITS.loginIpBurstWindowMs, 'login-burst');
+
     const account = await this.getAccountByIdentifier(input.identifier);
     if (!account) {
+      await this.registerIpAbuse(ipNorm, 'login-unknown-identifier');
       return null;
     }
 
@@ -1489,6 +1776,7 @@ export class SocialStore {
 
     const isValid = verifyPassword(input.password, account.password_hash);
     if (!isValid) {
+      await this.registerIpAbuse(ipNorm, 'login-bad-password');
       return null;
     }
 
@@ -1537,11 +1825,15 @@ export class SocialStore {
     await pool.query<ResultSetHeader>('DELETE FROM auth_sessions WHERE token_hash = ?', [tokenHash]);
   }
 
-  async requestPasswordReset(identifier: string): Promise<string | null> {
+  async requestPasswordReset(identifier: string, ip: string): Promise<string | null> {
     await this.ensureReady();
     const pool = getMysqlPool();
+    const ipNorm = normalizeIp(ip);
+    await this.assertIpAllowed(ipNorm, 'reset');
+    await this.enforceIpRateLimit(ipNorm, 'reset', APP_LIMITS.resetIpLimit, APP_LIMITS.resetIpWindowMs, 'reset-rate');
     const account = await this.getAccountByIdentifier(identifier);
     if (!account) {
+      await this.registerIpAbuse(ipNorm, 'reset-unknown-identifier');
       return null;
     }
 
@@ -1569,10 +1861,13 @@ export class SocialStore {
     return token;
   }
 
-  async resetPassword(token: string, newPassword: string): Promise<boolean> {
+  async resetPassword(token: string, newPassword: string, ip: string): Promise<boolean> {
     await this.ensureReady();
     const pool = getMysqlPool();
     const now = Date.now();
+    const ipNorm = normalizeIp(ip);
+    await this.assertIpAllowed(ipNorm, 'reset');
+    await this.enforceIpRateLimit(ipNorm, 'reset-token', APP_LIMITS.resetIpLimit, APP_LIMITS.resetIpWindowMs, 'reset-token-rate');
     const tokenHash = hashToken(token);
 
     await this.cleanupExpiredResets(now);
@@ -1591,6 +1886,7 @@ export class SocialStore {
 
     const reset = rows[0];
     if (!reset?.user_id || !reset?.id) {
+      await this.registerIpAbuse(ipNorm, 'reset-invalid-token');
       return false;
     }
 
@@ -3034,10 +3330,15 @@ export class SocialStore {
     return upload;
   }
 
-  async addMessage(userId: string, chatId: string, input: AddMessageInput): Promise<AppChatMessage> {
+  async addMessage(userId: string, chatId: string, input: AddMessageInput, ip?: string): Promise<AppChatMessage> {
     await this.ensureReady();
     const pool = getMysqlPool();
     const now = Date.now();
+    const ipNorm = normalizeIp(ip ?? '');
+    if (ipNorm) {
+      await this.assertIpAllowed(ipNorm, 'chat');
+      await this.enforceIpRateLimit(ipNorm, `chat:${chatId}`, CHAT_LIMITS.spamLongWindowLimit * 3, CHAT_LIMITS.spamLongWindowMs, 'chat-rate');
+    }
     const role = await this.getMembershipRole(userId, chatId);
     if (!role) {
       throw new Error('Chat not accessible.');
@@ -3068,7 +3369,14 @@ export class SocialStore {
     }
     const chatType = chatRow.chat_type === 'global' || chatRow.chat_type === 'direct' ? chatRow.chat_type : 'group';
 
-    await this.enforceMessageSpamProtection(userId, chatId, now);
+    try {
+      await this.enforceMessageSpamProtection(userId, chatId, now);
+    } catch (error) {
+      if (error instanceof MessageSpamError && ipNorm) {
+        await this.registerIpAbuse(ipNorm, 'message-spam', 2);
+      }
+      throw error;
+    }
 
     const attachmentIds = normalizeIds(input.attachmentIds ?? []).slice(0, 8);
     let attachments: AppChatAttachment[] = [];
@@ -3606,6 +3914,103 @@ export class SocialStore {
     await this.ensureReady();
     const pool = getMysqlPool();
     await pool.query<ResultSetHeader>('DELETE FROM app_blacklist_entries WHERE id = ?', [id]);
+  }
+
+  async listIpBlacklistEntries(): Promise<IpBlacklistEntry[]> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const [rows] = await pool.query<IpBlacklistEntryRow[]>(
+      `
+        SELECT id, ip_norm, note, forbid_register, forbid_login, forbid_reset, forbid_chat, terminate_sessions, created_at, updated_at
+        FROM app_ip_blacklist_entries
+        ORDER BY updated_at DESC, ip_norm ASC
+      `
+    );
+    return rows.map(mapIpBlacklistEntry);
+  }
+
+  async listIpAbuseFlags(limit = 200): Promise<IpAbuseFlag[]> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const safeLimit = Math.max(1, Math.min(500, Math.floor(limit)));
+    const [rows] = await pool.query<IpAbuseFlagRow[]>(
+      `
+        SELECT ip_norm, strikes, blocked_until, last_reason, created_at, updated_at
+        FROM app_ip_abuse_flags
+        ORDER BY strikes DESC, updated_at DESC
+        LIMIT ?
+      `,
+      [safeLimit]
+    );
+    return rows.map(mapIpAbuseFlag);
+  }
+
+  async addIpBlacklistEntry(ip: string, scope: IpRestrictionScope, note?: string | null): Promise<IpBlacklistEntry> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const ipNorm = normalizeIp(ip);
+    if (!ipNorm || ipNorm === 'unknown') {
+      throw new Error('Ungültige IP-Adresse.');
+    }
+    if (!scope.forbidRegister && !scope.forbidLogin && !scope.forbidReset && !scope.forbidChat) {
+      throw new Error('Mindestens eine Sperre muss aktiv sein.');
+    }
+
+    const now = Date.now();
+    const id = randomUUID();
+    await pool.query<ResultSetHeader>(
+      `
+        INSERT INTO app_ip_blacklist_entries (
+          id, ip_norm, note, forbid_register, forbid_login, forbid_reset, forbid_chat, terminate_sessions, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          note = VALUES(note),
+          forbid_register = VALUES(forbid_register),
+          forbid_login = VALUES(forbid_login),
+          forbid_reset = VALUES(forbid_reset),
+          forbid_chat = VALUES(forbid_chat),
+          terminate_sessions = VALUES(terminate_sessions),
+          updated_at = VALUES(updated_at)
+      `,
+      [
+        id,
+        ipNorm,
+        note?.trim().slice(0, 255) || null,
+        scope.forbidRegister ? 1 : 0,
+        scope.forbidLogin ? 1 : 0,
+        scope.forbidReset ? 1 : 0,
+        scope.forbidChat ? 1 : 0,
+        scope.terminateSessions ? 1 : 0,
+        now,
+        now
+      ]
+    );
+
+    if (scope.terminateSessions) {
+      await this.terminateSessionsForIp(ipNorm);
+    }
+
+    const [rows] = await pool.query<IpBlacklistEntryRow[]>(
+      `
+        SELECT id, ip_norm, note, forbid_register, forbid_login, forbid_reset, forbid_chat, terminate_sessions, created_at, updated_at
+        FROM app_ip_blacklist_entries
+        WHERE ip_norm = ?
+        LIMIT 1
+      `,
+      [ipNorm]
+    );
+    const entry = rows[0];
+    if (!entry) {
+      throw new Error('IP-Blacklist-Eintrag konnte nicht geladen werden.');
+    }
+    return mapIpBlacklistEntry(entry);
+  }
+
+  async removeIpBlacklistEntry(id: string): Promise<void> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    await pool.query<ResultSetHeader>('DELETE FROM app_ip_blacklist_entries WHERE id = ?', [id]);
   }
 
   async setGlobalRole(actorUserId: string, targetUserId: string, role: GlobalRole): Promise<void> {

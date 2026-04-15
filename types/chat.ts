@@ -90,6 +90,8 @@ export type AdminSnapshot = {
   activeChats: AdminChatSummary[];
   deactivatedChats: AdminChatSummary[];
   blacklist: AdminBlacklistEntry[];
+  ipBlacklist: AdminIpBlacklistEntry[];
+  ipAbuseFlags: AdminIpAbuseFlag[];
 };
 
 export type AdminChatSummary = {
@@ -112,5 +114,28 @@ export type AdminBlacklistEntry = {
   value: string;
   note: string | null;
   createdAt: number;
+  updatedAt: number;
+};
+
+export type AdminIpBlacklistEntry = {
+  id: string;
+  ip: string;
+  note: string | null;
+  scope: {
+    forbidRegister: boolean;
+    forbidLogin: boolean;
+    forbidReset: boolean;
+    forbidChat: boolean;
+    terminateSessions: boolean;
+  };
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type AdminIpAbuseFlag = {
+  ip: string;
+  strikes: number;
+  blockedUntil: number | null;
+  lastReason: string | null;
   updatedAt: number;
 };

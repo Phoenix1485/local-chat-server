@@ -15,10 +15,17 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   const loadSnapshot = async () => {
-    const [legacySnapshot, blacklist] = await Promise.all([chatStore.getAdminSnapshot(), socialStore.listBlacklistEntries()]);
+    const [legacySnapshot, blacklist, ipBlacklist, ipAbuseFlags] = await Promise.all([
+      chatStore.getAdminSnapshot(),
+      socialStore.listBlacklistEntries(),
+      socialStore.listIpBlacklistEntries(),
+      socialStore.listIpAbuseFlags()
+    ]);
     return {
       ...legacySnapshot,
-      blacklist
+      blacklist,
+      ipBlacklist,
+      ipAbuseFlags
     };
   };
 

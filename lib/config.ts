@@ -32,7 +32,19 @@ export const APP_LIMITS = {
   profileFirstNameMax: 64,
   profileLastNameMax: 64,
   profileBioMax: 280,
-  discoverPageSize: parsePositiveInt(process.env.APP_DISCOVER_PAGE_SIZE, 60)
+  discoverPageSize: parsePositiveInt(process.env.APP_DISCOVER_PAGE_SIZE, 60),
+  registerIpWindowMs: parsePositiveInt(process.env.APP_REGISTER_IP_WINDOW_MS, 10 * 60 * 1000),
+  registerIpLimit: parsePositiveInt(process.env.APP_REGISTER_IP_LIMIT, 4),
+  registerIpDailyLimit: parsePositiveInt(process.env.APP_REGISTER_IP_DAILY_LIMIT, 8),
+  loginIpWindowMs: parsePositiveInt(process.env.APP_LOGIN_IP_WINDOW_MS, 10 * 60 * 1000),
+  loginIpLimit: parsePositiveInt(process.env.APP_LOGIN_IP_LIMIT, 25),
+  loginIpBurstWindowMs: parsePositiveInt(process.env.APP_LOGIN_IP_BURST_WINDOW_MS, 60 * 1000),
+  loginIpBurstLimit: parsePositiveInt(process.env.APP_LOGIN_IP_BURST_LIMIT, 8),
+  resetIpWindowMs: parsePositiveInt(process.env.APP_RESET_IP_WINDOW_MS, 10 * 60 * 1000),
+  resetIpLimit: parsePositiveInt(process.env.APP_RESET_IP_LIMIT, 12),
+  abuseStrikeWindowMs: parsePositiveInt(process.env.APP_ABUSE_STRIKE_WINDOW_MS, 60 * 60 * 1000),
+  abuseStrikeAutoBlockThreshold: parsePositiveInt(process.env.APP_ABUSE_STRIKE_AUTO_BLOCK_THRESHOLD, 20),
+  abuseCooldownMs: parsePositiveInt(process.env.APP_ABUSE_COOLDOWN_MS, 24 * 60 * 60 * 1000)
 } as const;
 
 export const GLOBAL_CHAT_ID = '00000000-0000-0000-0000-000000000001';

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AdminBlacklistEntry, AdminSnapshot } from '@/types/chat';
+import type { AdminBlacklistEntry, AdminIpBlacklistEntry, AdminSnapshot } from '@/types/chat';
 import { StatusPill } from '@/components/StatusPill';
 
 export default function AdminPage() {
@@ -16,6 +16,15 @@ export default function AdminPage() {
   const [blacklistKind, setBlacklistKind] = useState<'name' | 'email'>('name');
   const [blacklistValue, setBlacklistValue] = useState('');
   const [blacklistNote, setBlacklistNote] = useState('');
+  const [ipValue, setIpValue] = useState('');
+  const [ipNote, setIpNote] = useState('');
+  const [ipScope, setIpScope] = useState({
+    forbidRegister: true,
+    forbidLogin: true,
+    forbidReset: true,
+    forbidChat: true,
+    terminateSessions: true
+  });
 
   const fetchSnapshot = useCallback(async (token: string): Promise<AdminSnapshot> => {
     const response = await fetch('/api/admin/state', {
@@ -147,6 +156,12 @@ export default function AdminPage() {
   const deactivatedChats = snapshot?.deactivatedChats ?? [];
   const allUsers = snapshot?.users ?? [];
   const blacklist = snapshot?.blacklist ?? [];
+  const ipBlacklist = snapshot?.ipBlacklist ?? [];
+  const ipAbuseFlags = snapshot?.ipAbuseFlags ?? [];
+  const blacklistedIpSet = useMemo(
+    () => new Set(ipBlacklist.map((entry) => entry.ip.trim().toLowerCase())),
+    [ipBlacklist]
+  );
   const pendingCount = useMemo(() => pendingUsers.length, [pendingUsers.length]);
 
   useEffect(() => {
@@ -370,6 +385,125 @@ export default function AdminPage() {
     }
   };
 
+  const addIpBlacklistEntry = async () => {
+    if (!activeToken) {
+      setError('Admin-Token fehlt.');
+      return;
+    }
+
+    const ip = ipValue.trim();
+    if (!ip) {
+      setError('Bitte eine IP-Adresse eintragen.');
+      return;
+    }
+    if (!ipScope.forbidRegister && !ipScope.forbidLogin && !ipScope.forbidReset && !ipScope.forbidChat) {
+      setError('Bitte mindestens eine Sperraktion auswählen.');
+      return;
+    }
+
+    setIsUpdating(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/admin/ip-blacklist', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-token': activeToken
+        },
+        body: JSON.stringify({
+          ip,
+          note: ipNote.trim() || null,
+          scope: ipScope
+        })
+      });
+      if (!response.ok) {
+        throw new Error(await readServerError(response, 'IP-Blacklist-Eintrag konnte nicht gespeichert werden.'));
+      }
+      setIpValue('');
+      setIpNote('');
+      const next = await fetchSnapshot(activeToken);
+      setSnapshot(next);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'IP-Blacklist-Eintrag konnte nicht gespeichert werden.');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const removeIpBlacklistEntry = async (entry: AdminIpBlacklistEntry) => {
+    if (!activeToken) {
+      setError('Admin-Token fehlt.');
+      return;
+    }
+    setIsUpdating(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/admin/ip-blacklist', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-token': activeToken
+        },
+        body: JSON.stringify({ id: entry.id })
+      });
+      if (!response.ok) {
+        throw new Error(await readServerError(response, 'IP-Blacklist-Eintrag konnte nicht gelöscht werden.'));
+      }
+      const next = await fetchSnapshot(activeToken);
+      setSnapshot(next);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'IP-Blacklist-Eintrag konnte nicht gelöscht werden.');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const promoteAbuseFlagToBlacklist = async (ip: string, reason?: string | null) => {
+    if (!activeToken) {
+      setError('Admin-Token fehlt.');
+      return;
+    }
+
+    const normalizedIp = ip.trim();
+    if (!normalizedIp) {
+      setError('Ungültige IP-Adresse.');
+      return;
+    }
+
+    setIsUpdating(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/admin/ip-blacklist', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-token': activeToken
+        },
+        body: JSON.stringify({
+          ip: normalizedIp,
+          note: reason ? `Aus Abuse-Flag: ${reason}` : 'Aus Abuse-Flag übernommen',
+          scope: {
+            forbidRegister: true,
+            forbidLogin: true,
+            forbidReset: true,
+            forbidChat: true,
+            terminateSessions: true
+          }
+        })
+      });
+      if (!response.ok) {
+        throw new Error(await readServerError(response, 'IP konnte nicht in die Blacklist übernommen werden.'));
+      }
+
+      const next = await fetchSnapshot(activeToken);
+      setSnapshot(next);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'IP konnte nicht in die Blacklist übernommen werden.');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   return (
     <main className="space-y-4" aria-busy={isConnecting || isUpdating}>
       <section className="glass-panel rounded-2xl p-4">
@@ -500,6 +634,144 @@ export default function AdminPage() {
             </li>
           ))}
           {blacklist.length === 0 ? <li className="surface-muted text-sm">Keine Blacklist-Einträge vorhanden.</li> : null}
+        </ul>
+      </section> : null}
+
+      {snapshot ? <section className="glass-panel rounded-2xl p-4">
+        <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">IP-Blacklist</h2>
+        <p className="surface-muted mt-1 text-sm">
+          Für jede IP-Adresse kannst du festlegen, welche Aktionen gesperrt werden und ob aktive Sessions sofort beendet werden.
+        </p>
+
+        <input
+          value={ipValue}
+          onChange={(event) => setIpValue(event.target.value)}
+          className="glass-input mt-3 text-sm"
+          placeholder="z.B. 203.0.113.5"
+        />
+
+        <textarea
+          value={ipNote}
+          onChange={(event) => setIpNote(event.target.value)}
+          className="glass-input mt-2 min-h-[84px] text-sm"
+          placeholder="Optionale Admin-Notiz"
+        />
+
+        <div className="mt-3 grid gap-2 md:grid-cols-2">
+          {[
+            ['forbidRegister', 'Registrierung sperren'],
+            ['forbidLogin', 'Login sperren'],
+            ['forbidReset', 'Reset/Passwort vergessen sperren'],
+            ['forbidChat', 'Chat/Message senden sperren'],
+            ['terminateSessions', 'Aktive Sessions sofort beenden']
+          ].map(([key, label]) => (
+            <label key={key} className="glass-card flex items-center gap-2 rounded-lg px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                checked={Boolean(ipScope[key as keyof typeof ipScope])}
+                onChange={(event) =>
+                  setIpScope((prev) => ({
+                    ...prev,
+                    [key]: event.target.checked
+                  }))
+                }
+              />
+              <span>{label}</span>
+            </label>
+          ))}
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={isUpdating}
+            onClick={() => {
+              void addIpBlacklistEntry();
+            }}
+            className="btn-soft btn-danger disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            IP speichern
+          </button>
+        </div>
+
+        <ul className="mt-4 space-y-2">
+          {ipBlacklist.map((entry) => (
+            <li key={entry.id} className="glass-card rounded-lg p-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-100">{entry.ip}</p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Aktionen:{' '}
+                    {[
+                      entry.scope.forbidRegister ? 'Register' : null,
+                      entry.scope.forbidLogin ? 'Login' : null,
+                      entry.scope.forbidReset ? 'Reset' : null,
+                      entry.scope.forbidChat ? 'Chat' : null
+                    ].filter(Boolean).join(', ') || 'Keine'}
+                    {entry.scope.terminateSessions ? ' | Sessions beenden' : ''}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Aktualisiert: {new Date(entry.updatedAt).toLocaleString()}
+                  </p>
+                  {entry.note ? <p className="mt-2 text-sm text-slate-200">{entry.note}</p> : null}
+                </div>
+                <button
+                  type="button"
+                  disabled={isUpdating}
+                  onClick={() => {
+                    void removeIpBlacklistEntry(entry);
+                  }}
+                  className="btn-soft btn-danger px-2 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Entfernen
+                </button>
+              </div>
+            </li>
+          ))}
+          {ipBlacklist.length === 0 ? <li className="surface-muted text-sm">Keine IP-Sperren vorhanden.</li> : null}
+        </ul>
+      </section> : null}
+
+      {snapshot ? <section className="glass-panel rounded-2xl p-4">
+        <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">IP Abuse Flags</h2>
+        <p className="surface-muted mt-1 text-sm">
+          Zeigt auffällige IP-Adressen mit Strike-Zähler, letztem Grund und möglicher Auto-Sperre.
+        </p>
+        <ul className="mt-4 space-y-2">
+          {ipAbuseFlags.map((flag) => (
+            <li key={flag.ip} className="glass-card rounded-lg p-3">
+              {(() => {
+                const isAlreadyBlacklisted = blacklistedIpSet.has(flag.ip.trim().toLowerCase());
+                return (
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-100">{flag.ip}</p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Status: {isAlreadyBlacklisted ? 'Bereits in IP-Blacklist' : 'Noch nicht in IP-Blacklist'}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-400">Strikes: {flag.strikes}</p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Blockiert bis: {flag.blockedUntil ? new Date(flag.blockedUntil).toLocaleString() : 'nicht blockiert'}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-400">Zuletzt: {new Date(flag.updatedAt).toLocaleString()}</p>
+                  {flag.lastReason ? <p className="mt-2 text-sm text-slate-200">{flag.lastReason}</p> : null}
+                </div>
+                <button
+                  type="button"
+                  disabled={isUpdating || isAlreadyBlacklisted}
+                  onClick={() => {
+                    void promoteAbuseFlagToBlacklist(flag.ip, flag.lastReason);
+                  }}
+                  className="btn-soft btn-danger px-2 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isAlreadyBlacklisted ? 'Bereits übernommen' : 'In IP-Blacklist übernehmen'}
+                </button>
+              </div>
+                );
+              })()}
+            </li>
+          ))}
+          {ipAbuseFlags.length === 0 ? <li className="surface-muted text-sm">Keine auffälligen IPs vorhanden.</li> : null}
         </ul>
       </section> : null}
 

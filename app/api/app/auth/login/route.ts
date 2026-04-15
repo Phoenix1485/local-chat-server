@@ -1,5 +1,5 @@
 import { createSessionCookie } from '@/lib/appAuth';
-import { enforceSameOrigin, jsonError } from '@/lib/http';
+import { enforceSameOrigin, getClientIp, jsonError } from '@/lib/http';
 import { socialStore } from '@/lib/socialStore';
 import { validatePassword } from '@/lib/validation';
 
@@ -41,7 +41,8 @@ export async function POST(request: Request): Promise<Response> {
     loggedIn = await socialStore.loginAccount({
       identifier,
       password,
-      userAgent: request.headers.get('user-agent') ?? ''
+      userAgent: request.headers.get('user-agent') ?? '',
+      ip: getClientIp(request)
     });
   } catch (error) {
     return jsonError(error instanceof Error ? error.message : 'Login failed.', 403);

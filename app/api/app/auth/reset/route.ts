@@ -1,4 +1,4 @@
-import { enforceSameOrigin, jsonError } from '@/lib/http';
+import { enforceSameOrigin, getClientIp, jsonError } from '@/lib/http';
 import { socialStore } from '@/lib/socialStore';
 import { validatePassword } from '@/lib/validation';
 
@@ -37,7 +37,7 @@ export async function POST(request: Request): Promise<Response> {
 
   let ok = false;
   try {
-    ok = await socialStore.resetPassword(token, password);
+    ok = await socialStore.resetPassword(token, password, getClientIp(request));
   } catch (error) {
     return jsonError(error instanceof Error ? error.message : 'Password reset failed.', 403);
   }
