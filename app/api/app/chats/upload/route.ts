@@ -12,6 +12,10 @@ const ALLOWED_MIME = new Set([
   'image/webp',
   'image/gif',
   'image/bmp',
+  'application/x-msdownload',
+  'application/x-msdos-program',
+  'application/vnd.microsoft.portable-executable',
+  'application/octet-stream',
   'application/pdf',
   'text/plain',
   'application/msword',
@@ -71,4 +75,3 @@ export async function POST(request: Request): Promise<Response> {
     return jsonError(error instanceof Error ? error.message : 'Upload failed.', 422);
   }
 }
-

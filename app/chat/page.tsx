@@ -2894,7 +2894,7 @@ export default function ChatPage() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/*,.pdf,.txt,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
+                  accept="image/*,.pdf,.txt,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.exe,application/x-msdownload,application/x-msdos-program,application/vnd.microsoft.portable-executable,application/octet-stream"
                   className="hidden"
                   onChange={(event) => {
                     const file = event.target.files?.[0] ?? null;
