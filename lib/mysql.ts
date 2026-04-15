@@ -41,9 +41,6 @@ function readMysqlConfig(): MysqlConfig {
 
 function createPoolFromConfig(config: MysqlConfig): Pool {
 
-  console.log("MYSQL_URL =", process.env.MYSQL_URL);
-  console.log("DATABASE_URL =", process.env.DATABASE_URL);
-
   if (config.uri) {
     return mysql.createPool(config.uri);
   }

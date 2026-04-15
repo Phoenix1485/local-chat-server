@@ -524,6 +524,7 @@ body::before {
     grid-template-columns: 1fr;
     align-items: stretch;
     min-height: calc(100dvh - 5.6rem);
+    overflow-x: hidden;
   }
 
   .chat-page-shell {
@@ -598,6 +599,7 @@ body::before {
     backdrop-filter: blur(16px) saturate(128%);
     padding: 0.95rem;
     overscroll-behavior: contain;
+    overflow-x: hidden;
   }
 
   .workspace-panel>section+section {
@@ -615,6 +617,7 @@ body::before {
     flex-direction: column;
     min-height: 0;
     overflow: hidden;
+    overflow-x: hidden;
   }
 
   .chat-header {

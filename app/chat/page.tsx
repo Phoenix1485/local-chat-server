@@ -524,6 +524,7 @@ export default function ChatPage() {
   const sendMessageInFlightRef = useRef(false);
   const shouldStickToBottomRef = useRef(true);
   const forceScrollToBottomRef = useRef(false);
+  const previousMessageCountRef = useRef(0);
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
   const inviteCodeInputRef = useRef<HTMLInputElement | null>(null);
   const messageSearchInputRef = useRef<HTMLInputElement | null>(null);
@@ -1062,12 +1063,14 @@ export default function ChatPage() {
       return;
     }
 
-    const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
-    const shouldScroll = forceScrollToBottomRef.current || shouldStickToBottomRef.current || distanceFromBottom <= 80;
+    const previousCount = previousMessageCountRef.current;
+    const hasNewMessages = messages.length > previousCount;
+    const shouldScroll = forceScrollToBottomRef.current || (hasNewMessages && shouldStickToBottomRef.current);
     if (shouldScroll) {
       bottomRef.current?.scrollIntoView({ behavior: forceScrollToBottomRef.current ? 'smooth' : 'auto' });
     }
     forceScrollToBottomRef.current = false;
+    previousMessageCountRef.current = messages.length;
   }, [messages]);
 
   useEffect(() => {
@@ -1086,6 +1089,12 @@ export default function ChatPage() {
     return () => {
       list.removeEventListener('scroll', onScroll);
     };
+  }, [activeChatId]);
+
+  useEffect(() => {
+    previousMessageCountRef.current = 0;
+    shouldStickToBottomRef.current = true;
+    forceScrollToBottomRef.current = true;
   }, [activeChatId]);
 
   useEffect(() => {
