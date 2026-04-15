@@ -1700,6 +1700,20 @@ export class SocialStore {
       }
     }
 
+    const [ipTotalRows] = await pool.query<CountRow[]>(
+      `
+        SELECT COUNT(*) AS total
+        FROM users
+        WHERE LOWER(ip) = ?
+      `,
+      [ipNorm]
+    );
+    const totalAccountsFromIp = asNumber(ipTotalRows[0]?.total, 0);
+    if (totalAccountsFromIp >= APP_LIMITS.maxAccountsPerIp) {
+      await this.registerIpAbuse(ipNorm, 'max-accounts-per-ip-reached', 3);
+      throw new Error(`Diese IP-Adresse hat das Maximum von ${APP_LIMITS.maxAccountsPerIp} Accounts erreicht.`);
+    }
+
     const [countRows] = await pool.query<CountRow[]>('SELECT COUNT(*) AS total FROM auth_accounts');
     const totalAccounts = asNumber(countRows[0]?.total, 0);
     const role: GlobalRole = totalAccounts === 0 ? 'superadmin' : 'user';
@@ -4011,6 +4025,26 @@ export class SocialStore {
     await this.ensureReady();
     const pool = getMysqlPool();
     await pool.query<ResultSetHeader>('DELETE FROM app_ip_blacklist_entries WHERE id = ?', [id]);
+  }
+
+  async adminSetUserPassword(userId: string, newPassword: string, revokeSessions = true): Promise<void> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const account = await this.getAccountByUserId(userId);
+    if (!account) {
+      throw new Error('Account not found.');
+    }
+
+    const now = Date.now();
+    await pool.query<ResultSetHeader>('UPDATE auth_accounts SET password_hash = ?, updated_at = ? WHERE user_id = ?', [
+      hashPassword(newPassword),
+      now,
+      userId
+    ]);
+
+    if (revokeSessions) {
+      await pool.query<ResultSetHeader>('DELETE FROM auth_sessions WHERE user_id = ?', [userId]);
+    }
   }
 
   async setGlobalRole(actorUserId: string, targetUserId: string, role: GlobalRole): Promise<void> {

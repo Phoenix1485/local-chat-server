@@ -25,6 +25,9 @@ export default function AdminPage() {
     forbidChat: true,
     terminateSessions: true
   });
+  const [passwordTargetUserId, setPasswordTargetUserId] = useState('');
+  const [passwordValue, setPasswordValue] = useState('');
+  const [revokePasswordSessions, setRevokePasswordSessions] = useState(true);
 
   const fetchSnapshot = useCallback(async (token: string): Promise<AdminSnapshot> => {
     const response = await fetch('/api/admin/state', {
@@ -458,6 +461,50 @@ export default function AdminPage() {
     }
   };
 
+  const adminSetPassword = async () => {
+    if (!activeToken) {
+      setError('Admin-Token fehlt.');
+      return;
+    }
+    const userId = passwordTargetUserId.trim();
+    if (!userId) {
+      setError('Bitte einen Nutzer auswählen.');
+      return;
+    }
+    const password = passwordValue;
+    if (!password || password.length < 8) {
+      setError('Passwort muss mindestens 8 Zeichen haben.');
+      return;
+    }
+
+    setIsUpdating(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/admin/password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-token': activeToken
+        },
+        body: JSON.stringify({
+          userId,
+          password,
+          revokeSessions: revokePasswordSessions
+        })
+      });
+      if (!response.ok) {
+        throw new Error(await readServerError(response, 'Passwort konnte nicht gesetzt werden.'));
+      }
+      setPasswordValue('');
+      const next = await fetchSnapshot(activeToken);
+      setSnapshot(next);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Passwort konnte nicht gesetzt werden.');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const promoteAbuseFlagToBlacklist = async (ip: string, reason?: string | null) => {
     if (!activeToken) {
       setError('Admin-Token fehlt.');
@@ -773,6 +820,56 @@ export default function AdminPage() {
           ))}
           {ipAbuseFlags.length === 0 ? <li className="surface-muted text-sm">Keine auffälligen IPs vorhanden.</li> : null}
         </ul>
+      </section> : null}
+
+      {snapshot ? <section className="glass-panel rounded-2xl p-4">
+        <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">Admin Passwort-Reset</h2>
+        <p className="surface-muted mt-1 text-sm">
+          Setzt ein neues Passwort für einen Nutzer. Optional werden alle aktiven Sessions dieses Nutzers sofort beendet.
+        </p>
+
+        <select
+          value={passwordTargetUserId}
+          onChange={(event) => setPasswordTargetUserId(event.target.value)}
+          className="glass-input mt-3 text-sm"
+        >
+          <option value="">Nutzer auswählen...</option>
+          {allUsers.map((user) => (
+            <option key={user.id} value={user.id}>
+              {user.name} [{user.status}]
+            </option>
+          ))}
+        </select>
+
+        <input
+          type="password"
+          value={passwordValue}
+          onChange={(event) => setPasswordValue(event.target.value)}
+          className="glass-input mt-2 text-sm"
+          placeholder="Neues Passwort (mind. 8 Zeichen)"
+        />
+
+        <label className="mt-2 flex items-center gap-2 text-sm text-slate-200">
+          <input
+            type="checkbox"
+            checked={revokePasswordSessions}
+            onChange={(event) => setRevokePasswordSessions(event.target.checked)}
+          />
+          Aktive Sessions des Nutzers beenden
+        </label>
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={isUpdating || !passwordTargetUserId}
+            onClick={() => {
+              void adminSetPassword();
+            }}
+            className="btn-soft btn-warning disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Passwort setzen
+          </button>
+        </div>
       </section> : null}
 
       {snapshot ? <section className="glass-panel rounded-2xl p-4">

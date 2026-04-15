@@ -36,6 +36,7 @@ export const APP_LIMITS = {
   registerIpWindowMs: parsePositiveInt(process.env.APP_REGISTER_IP_WINDOW_MS, 10 * 60 * 1000),
   registerIpLimit: parsePositiveInt(process.env.APP_REGISTER_IP_LIMIT, 4),
   registerIpDailyLimit: parsePositiveInt(process.env.APP_REGISTER_IP_DAILY_LIMIT, 8),
+  maxAccountsPerIp: parsePositiveInt(process.env.APP_MAX_ACCOUNTS_PER_IP, 10),
   loginIpWindowMs: parsePositiveInt(process.env.APP_LOGIN_IP_WINDOW_MS, 10 * 60 * 1000),
   loginIpLimit: parsePositiveInt(process.env.APP_LOGIN_IP_LIMIT, 25),
   loginIpBurstWindowMs: parsePositiveInt(process.env.APP_LOGIN_IP_BURST_WINDOW_MS, 60 * 1000),
