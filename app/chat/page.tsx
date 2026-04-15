@@ -515,12 +515,15 @@ export default function ChatPage() {
   const [info, setInfo] = useState<string | null>(null);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const messageListRef = useRef<HTMLDivElement | null>(null);
   const firstUnreadRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const typingActiveRef = useRef(false);
   const typingIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mentionAudioRef = useRef<AudioContext | null>(null);
   const sendMessageInFlightRef = useRef(false);
+  const shouldStickToBottomRef = useRef(true);
+  const forceScrollToBottomRef = useRef(false);
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
   const inviteCodeInputRef = useRef<HTMLInputElement | null>(null);
   const messageSearchInputRef = useRef<HTMLInputElement | null>(null);
@@ -567,10 +570,13 @@ export default function ChatPage() {
     }
     const query = mentionDraft.query.toLowerCase();
     const out: MentionSuggestion[] = [];
+    const canUseGlobalBroadcastMentions = context.chat.kind === 'global' && (me.role === 'admin' || me.role === 'superadmin');
 
-    if (context.chat.kind === 'group') {
+    if (context.chat.kind === 'group' || canUseGlobalBroadcastMentions) {
       const canUseEveryone = groupSettings?.canUseEveryoneMention === true;
       const canUseHere = groupSettings?.canUseHereMention === true;
+      const canUseEveryoneMention = context.chat.kind === 'group' ? canUseEveryone : canUseGlobalBroadcastMentions;
+      const canUseHereMention = context.chat.kind === 'group' ? canUseHere : canUseGlobalBroadcastMentions;
       const includeEveryone = query.length === 0 || 'everyone'.includes(query) || 'everone'.includes(query);
       const includeHere = query.length === 0 || 'here'.includes(query);
 
@@ -579,8 +585,10 @@ export default function ChatPage() {
           id: 'special-everyone',
           value: 'everyone',
           label: '@everyone',
-          subtitle: canUseEveryone ? 'Alle in der Gruppe pingen' : 'Nicht erlaubt durch Gruppen-Policy',
-          disabled: !canUseEveryone
+          subtitle: context.chat.kind === 'group'
+            ? (canUseEveryoneMention ? 'Alle in der Gruppe pingen' : 'Nicht erlaubt durch Gruppen-Policy')
+            : 'Alle im Global-Chat pingen',
+          disabled: !canUseEveryoneMention
         });
       }
       if (includeHere) {
@@ -588,8 +596,10 @@ export default function ChatPage() {
           id: 'special-here',
           value: 'here',
           label: '@here',
-          subtitle: canUseHere ? 'Nur online Mitglieder pingen' : 'Nicht erlaubt durch Gruppen-Policy',
-          disabled: !canUseHere
+          subtitle: context.chat.kind === 'group'
+            ? (canUseHereMention ? 'Nur online Mitglieder pingen' : 'Nicht erlaubt durch Gruppen-Policy')
+            : 'Nur online Nutzer im Global-Chat pingen',
+          disabled: !canUseHereMention
         });
       }
     }
@@ -1047,8 +1057,36 @@ export default function ChatPage() {
   }, [activeChatId, router, token, me?.id, me?.username, me?.fullName, activeChatName, notificationPermission]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const list = messageListRef.current;
+    if (!list) {
+      return;
+    }
+
+    const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
+    const shouldScroll = forceScrollToBottomRef.current || shouldStickToBottomRef.current || distanceFromBottom <= 80;
+    if (shouldScroll) {
+      bottomRef.current?.scrollIntoView({ behavior: forceScrollToBottomRef.current ? 'smooth' : 'auto' });
+    }
+    forceScrollToBottomRef.current = false;
   }, [messages]);
+
+  useEffect(() => {
+    const list = messageListRef.current;
+    if (!list) {
+      return;
+    }
+
+    const onScroll = () => {
+      const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
+      shouldStickToBottomRef.current = distanceFromBottom <= 80;
+    };
+
+    onScroll();
+    list.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      list.removeEventListener('scroll', onScroll);
+    };
+  }, [activeChatId]);
 
   useEffect(() => {
     setShowGroupManageModal(false);
@@ -1898,6 +1936,7 @@ export default function ChatPage() {
 
     setError(null);
     sendMessageInFlightRef.current = true;
+    forceScrollToBottomRef.current = true;
     try {
       await sendPayload(requestPayload);
       setText('');
@@ -2559,7 +2598,7 @@ export default function ChatPage() {
             </div>
           </div>
 
-          <motion.div className="message-list" onClick={() => setActionMenuMessageId(null)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3, delay: 0.2 }}>
+          <motion.div ref={messageListRef} className="message-list" onClick={() => setActionMenuMessageId(null)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3, delay: 0.2 }}>
             {filteredMessages.map((message, index) => {
               const isMe = message.user.id === me.id;
               const isUnreadStart = firstUnreadMessageId === message.id && unreadCountAtOpen > 0;
@@ -2821,6 +2860,16 @@ export default function ChatPage() {
                 >
                   Umfrage
                 </button>
+                {context?.chat.kind === 'global' && (me?.role === 'admin' || me?.role === 'superadmin') ? (
+                  <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => appendMentionToken('@everyone')}>
+                    @everyone
+                  </button>
+                ) : null}
+                {context?.chat.kind === 'global' && (me?.role === 'admin' || me?.role === 'superadmin') ? (
+                  <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => appendMentionToken('@here')}>
+                    @here
+                  </button>
+                ) : null}
                 {context?.chat.kind === 'group' && groupSettings?.canUseEveryoneMention ? (
                   <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => appendMentionToken('@everyone')}>
                     @everyone

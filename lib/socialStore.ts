@@ -3339,6 +3339,7 @@ export class SocialStore {
     chatType: 'global' | 'group' | 'direct',
     senderUserId: string,
     senderRole: GroupMemberRole,
+    senderGlobalRole: GlobalRole,
     messageText: string,
     everyonePolicy: GroupMentionPolicy,
     herePolicy: GroupMentionPolicy
@@ -3351,6 +3352,10 @@ export class SocialStore {
 
     const shouldPingEveryone = hasMentionToken(trimmedText, 'everyone');
     const shouldPingHere = hasMentionToken(trimmedText, 'here');
+    const canUseGlobalBroadcastMentions = senderGlobalRole === 'admin' || senderGlobalRole === 'superadmin';
+    if (chatType === 'global' && (shouldPingEveryone || shouldPingHere) && !canUseGlobalBroadcastMentions) {
+      throw new Error('Only admins and superadmins can use @everyone or @here in global chat.');
+    }
     if (chatType === 'group' && shouldPingEveryone && !this.canUseMentionByPolicy(senderRole, everyonePolicy)) {
       throw new Error('You are not allowed to use @everyone in this group.');
     }
@@ -3681,6 +3686,7 @@ export class SocialStore {
       chatType,
       userId,
       role,
+      account.global_role,
       messageText,
       toGroupMentionPolicy(chatRow.group_everyone_mention_policy),
       toGroupMentionPolicy(chatRow.group_here_mention_policy)
