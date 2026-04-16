@@ -2879,14 +2879,14 @@ export class SocialStore {
     return state;
   }
 
-  private buildGroupSettings(chat: GroupChatControlRow, role: GroupMemberRole): AppGroupSettings {
+  private buildGroupSettings(chat: GroupChatControlRow, role: GroupMemberRole | null, globalRole: GlobalRole | null): AppGroupSettings {
     const inviteMode = toGroupInviteMode(chat.group_invite_mode);
     const invitePolicy = toGroupInvitePolicy(chat.group_invite_policy);
     const everyoneMentionPolicy = toGroupMentionPolicy(chat.group_everyone_mention_policy);
     const hereMentionPolicy = toGroupMentionPolicy(chat.group_here_mention_policy);
     const context: GroupPermissionContext = {
       memberRole: role,
-      globalRole: null,
+      globalRole,
       invitePolicy,
       everyoneMentionPolicy,
       hereMentionPolicy
@@ -3529,7 +3529,7 @@ export class SocialStore {
     if (!updated) {
       throw new Error('Group settings could not be loaded.');
     }
-    return this.buildGroupSettings(updated, role);
+    return this.buildGroupSettings(updated, role, state.context.globalRole);
   }
 
   async regenerateGroupInviteCode(userId: string, chatId: string): Promise<AppGroupSettings> {
@@ -3570,7 +3570,7 @@ export class SocialStore {
     if (!next) {
       throw new Error('Group settings could not be loaded.');
     }
-    return this.buildGroupSettings(next, role);
+    return this.buildGroupSettings(next, role, state.context.globalRole);
   }
 
   async closeGroupChat(userId: string, chatId: string): Promise<void> {
@@ -4010,7 +4010,10 @@ export class SocialStore {
     const pool = getMysqlPool();
     const now = Date.now();
 
-    const role = await this.getMembershipRole(userId, chatId);
+    const [role, viewerAccount] = await Promise.all([
+      this.getMembershipRole(userId, chatId),
+      this.getAccountByUserId(userId)
+    ]);
     if (!role) {
       return null;
     }
@@ -4138,7 +4141,7 @@ export class SocialStore {
       messages,
       unreadCountAtOpen,
       firstUnreadMessageId,
-      groupSettings: groupChat ? this.buildGroupSettings(groupChat, role) : null
+      groupSettings: groupChat ? this.buildGroupSettings(groupChat, role, viewerAccount?.global_role ?? null) : null
     };
   }
 

@@ -688,6 +688,10 @@ export default function ChatPage() {
   const members = context?.members ?? [];
   const onlineMembersCount = members.filter((member) => member.isOnline).length;
   const groupSettings = context?.groupSettings ?? null;
+  const viewerComparableRole: GroupMemberRole | null =
+    context?.chat.kind === 'group' ? (context.chat.memberRole ?? (me?.role === 'superadmin' ? 'owner' : null)) : null;
+  const activeProfileMember =
+    profileCard && context?.chat.kind === 'group' ? members.find((member) => member.user.id === profileCard.id) ?? null : null;
   const appOrigin = typeof window !== 'undefined' ? window.location.origin : '';
 
   const discoverCandidates = useMemo(
@@ -1895,6 +1899,7 @@ export default function ChatPage() {
         body: JSON.stringify({ chatId: activeChatId, messageId, emoji })
       })) as { message: AppChatMessage };
       patchMessage(payload.message);
+      setActionMenuMessageId(null);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Reaktion fehlgeschlagen.');
     }
@@ -3127,6 +3132,30 @@ export default function ChatPage() {
                         </div>
                       ) : null}
 
+                      {message.reactions.length > 0 && !message.deletedForAll ? (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {message.reactions.map((reaction) => (
+                            <button
+                              key={`${message.id}-${reaction.emoji}`}
+                              type="button"
+                              className={`reaction-chip ${reaction.reactedByMe ? 'active' : ''}`}
+                              style={reaction.reactedByMe
+                                ? {
+                                    borderColor: hexToRgba(me?.accentColor, 0.38),
+                                    background: `linear-gradient(135deg, ${hexToRgba(me?.accentColor, 0.22)}, rgba(15, 23, 42, 0.85))`,
+                                    color: me?.accentColor ?? '#e2e8f0'
+                                  }
+                                : undefined}
+                              onClick={() => void reactToMessage(message.id, reaction.emoji)}
+                              aria-label={`Reaktion ${reaction.emoji} ${reaction.count}`}
+                            >
+                              <span>{reaction.emoji}</span>
+                              <span>{reaction.count}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+
                       {isMe && !message.deletedForAll && isGroupChat ? (
                         hasReaders ? (
                           <div className="msg-read-group">
@@ -3399,6 +3428,31 @@ export default function ChatPage() {
                     <span className="surface-muted text-[11px] uppercase">{groupRoleLabel(member.role)}</span>
                   </div>
                   {member.moderationNote ? <p className="surface-muted mt-1 text-[11px] truncate">{member.moderationNote}</p> : null}
+                  {context?.chat.kind === 'group' && member.user.id !== me.id && viewerComparableRole && canManageRole(viewerComparableRole, member.role) ? (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {groupSettings?.canModerateMessages ? (
+                        <>
+                          <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void manageMember(member.user.id, 'mute_1h', undefined, 'member_list_quick_mute')}>
+                            1h mute
+                          </button>
+                          {member.banActive ? (
+                            <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void manageMember(member.user.id, 'unban', undefined, 'member_list_quick_unban')}>
+                              Unban
+                            </button>
+                          ) : (
+                            <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void manageMember(member.user.id, 'ban', undefined, 'member_list_quick_ban')}>
+                              Bannen
+                            </button>
+                          )}
+                        </>
+                      ) : null}
+                      {groupSettings?.canManageUsers ? (
+                        <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void manageMember(member.user.id, 'kick')}>
+                          Entfernen
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </motion.li>
               ))}
             </ul>
@@ -3723,7 +3777,7 @@ export default function ChatPage() {
               <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">User verwalten</h3>
               <ul className="mt-2 max-h-56 space-y-1.5 overflow-y-auto">
                 {members.map((member) => {
-                  const viewerRole = context.chat.memberRole;
+                  const viewerRole = viewerComparableRole;
                   const canPromoteToModerator = member.user.id !== me.id && canAssignRole(viewerRole, member.role, 'moderator');
                   const canPromoteToAdmin = member.user.id !== me.id && canAssignRole(viewerRole, member.role, 'admin');
                   const canDemoteToMember = member.user.id !== me.id && canAssignRole(viewerRole, member.role, 'member');
@@ -4328,6 +4382,38 @@ export default function ChatPage() {
                 </button>
               ) : null}
             </div>
+
+            {activeProfileMember && profileCard.id !== me.id && viewerComparableRole && canManageRole(viewerComparableRole, activeProfileMember.role) ? (
+              <div className="mt-4 rounded-2xl border border-slate-800/80 bg-slate-950/45 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">Direkt verwalten</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {groupSettings?.canModerateMessages ? (
+                    <>
+                      <button className="btn-soft text-xs" onClick={() => void manageMember(profileCard.id, 'mute_1h', undefined, 'profile_modal_quick_mute')}>
+                        1h mute
+                      </button>
+                      {activeProfileMember.banActive ? (
+                        <button className="btn-soft text-xs" onClick={() => void manageMember(profileCard.id, 'unban', undefined, 'profile_modal_quick_unban')}>
+                          Unban
+                        </button>
+                      ) : (
+                        <button className="btn-soft text-xs" onClick={() => void manageMember(profileCard.id, 'ban', undefined, 'profile_modal_quick_ban')}>
+                          Bannen
+                        </button>
+                      )}
+                    </>
+                  ) : null}
+                  {groupSettings?.canManageUsers ? (
+                    <button className="btn-soft text-xs" onClick={() => void manageMember(profileCard.id, 'kick')}>
+                      Entfernen
+                    </button>
+                  ) : null}
+                  <button className="btn-soft text-xs" onClick={() => openUserReportModal(profileCard.id, profileCard.fullName)}>
+                    Melden
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             {me.role === 'superadmin' ? (
               <div className="mt-4 grid grid-cols-3 gap-2">
