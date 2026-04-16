@@ -1,6 +1,7 @@
 import { requireSession } from '@/lib/appAuth';
+import { PermissionDeniedError } from '@/lib/groupPermissions';
 import { enforceSameOrigin, getClientIp, isUuid, jsonError } from '@/lib/http';
-import { IpRestrictedError, MessageCooldownError, MessageSpamError, socialStore } from '@/lib/socialStore';
+import { GroupMutedError, IpRestrictedError, MessageCooldownError, MessageSpamError, socialStore } from '@/lib/socialStore';
 import { findFirstTenorUrl, resolveTenorGifFromInput, stripTenorUrlFromText } from '@/lib/tenor';
 import { validateMessage, validatePollOptions, validatePollQuestion } from '@/lib/validation';
 
@@ -125,6 +126,24 @@ export async function POST(request: Request): Promise<Response> {
     }, getClientIp(request));
     return Response.json({ message });
   } catch (error) {
+    if (error instanceof PermissionDeniedError) {
+      return jsonError(error.message, 403);
+    }
+    if (error instanceof GroupMutedError) {
+      return Response.json(
+        {
+          error: error.message,
+          retryAfterMs: error.retryAfterMs
+        },
+        {
+          status: 403,
+          headers: {
+            'Cache-Control': 'no-store',
+            'Retry-After': String(Math.max(1, Math.ceil(error.retryAfterMs / 1000)))
+          }
+        }
+      );
+    }
     if (error instanceof MessageSpamError) {
       return Response.json(
         {

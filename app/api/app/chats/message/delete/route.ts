@@ -1,4 +1,5 @@
 import { requireSession } from '@/lib/appAuth';
+import { PermissionDeniedError } from '@/lib/groupPermissions';
 import { enforceSameOrigin, isUuid, jsonError } from '@/lib/http';
 import { socialStore } from '@/lib/socialStore';
 
@@ -43,7 +44,9 @@ export async function POST(request: Request): Promise<Response> {
     const result = await socialStore.deleteMessage(auth.session.user.id, chatId, messageId, scope);
     return Response.json(result);
   } catch (error) {
+    if (error instanceof PermissionDeniedError) {
+      return jsonError(error.message, 403);
+    }
     return jsonError(error instanceof Error ? error.message : 'Delete failed.', 422);
   }
 }
-

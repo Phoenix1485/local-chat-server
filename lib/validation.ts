@@ -81,6 +81,26 @@ export function validateBio(value: string): string | null {
   return null;
 }
 
+export function validateNickname(value: string, min = 2, max = 32): string | null {
+  return validateName(value, min, max);
+}
+
+export function validateHexColor(value: string): string | null {
+  const normalized = value.trim();
+  if (!/^#[0-9a-fA-F]{6}$/.test(normalized)) {
+    return 'Color must be a hex value like #38bdf8.';
+  }
+  return null;
+}
+
+export function validateThemePreset(value: string, allowed: readonly string[]): string | null {
+  const normalized = value.trim();
+  if (!allowed.includes(normalized)) {
+    return 'Theme preset is invalid.';
+  }
+  return null;
+}
+
 export function validatePollQuestion(value: string): string | null {
   const normalized = value.trim();
   if (!normalized) {

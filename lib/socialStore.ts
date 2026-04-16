@@ -1,9 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { APP_LIMITS, CHAT_LIMITS, GLOBAL_CHAT_ID } from '@/lib/config';
+import {
+  assertGroupCapability,
+  canManageRole,
+  hasGroupCapability,
+  isGroupMemberRole,
+  PermissionDeniedError,
+  type GroupCapability,
+  type GroupPermissionContext
+} from '@/lib/groupPermissions';
 import { ensureMysqlSchema, getMysqlPool } from '@/lib/mysql';
 import { rateLimiter } from '@/lib/rateLimiter';
 import { createSessionToken, hashPassword, hashToken, normalizeEmail, normalizeUsername, verifyPassword } from '@/lib/security';
+import { normalizeName } from '@/lib/validation';
 import type {
   AppChatAttachment,
   AppBootstrap,
@@ -17,13 +27,19 @@ import type {
   AppChatReaction,
   AppChatSummary,
   AppModerationLog,
+  AppModerationReport,
+  AppModerationReportReason,
+  AppModerationReportStatus,
+  AppNicknameSlot,
   AppUserProfile,
+  ChatBackgroundPreset,
   FriendRequestItem,
   GlobalRole,
   GroupInviteMode,
   GroupInvitePolicy,
   GroupMentionPolicy,
-  GroupMemberRole
+  GroupMemberRole,
+  NicknameScope
 } from '@/types/social';
 
 type AccountRow = RowDataPacket & {
@@ -37,6 +53,8 @@ type AccountRow = RowDataPacket & {
   last_name: string;
   bio: string;
   global_role: GlobalRole;
+  accent_color: string;
+  chat_background: ChatBackgroundPreset;
   avatar_updated_at: number | null;
   created_at: number;
   updated_at: number;
@@ -88,6 +106,11 @@ type GroupChatControlRow = RowDataPacket & {
   group_message_cooldown_ms: number;
 };
 
+type GroupPermissionState = {
+  chat: GroupChatControlRow;
+  context: GroupPermissionContext;
+};
+
 type ChatMemberRow = RowDataPacket & {
   user_id: string;
   username: string;
@@ -96,10 +119,16 @@ type ChatMemberRow = RowDataPacket & {
   bio: string;
   email: string | null;
   global_role: GlobalRole;
+  accent_color: string;
+  chat_background: ChatBackgroundPreset;
   avatar_updated_at: number | null;
   joined_at: number;
   member_role: GroupMemberRole;
   is_online: number;
+  muted_until: number | null;
+  mute_reason: string | null;
+  banned_at: number | null;
+  ban_reason: string | null;
 };
 
 type ChatMemberProfileRow = RowDataPacket & {
@@ -110,6 +139,8 @@ type ChatMemberProfileRow = RowDataPacket & {
   bio: string;
   email: string | null;
   global_role: GlobalRole;
+  accent_color: string;
+  chat_background: ChatBackgroundPreset;
   avatar_updated_at: number | null;
 };
 
@@ -126,6 +157,8 @@ type MessageRow = RowDataPacket & {
   bio: string;
   email: string | null;
   global_role: GlobalRole;
+  accent_color: string;
+  chat_background: ChatBackgroundPreset;
   avatar_updated_at: number | null;
 };
 
@@ -137,6 +170,8 @@ type FriendProfileRow = RowDataPacket & {
   bio: string;
   email: string | null;
   global_role: GlobalRole;
+  accent_color: string;
+  chat_background: ChatBackgroundPreset;
   avatar_updated_at: number | null;
 };
 
@@ -195,6 +230,44 @@ type GroupModerationLogRow = RowDataPacket & {
   created_at: number;
 };
 
+type ModerationReportRow = RowDataPacket & {
+  id: string;
+  chat_id: string;
+  status: AppModerationReportStatus;
+  reason: AppModerationReportReason;
+  reporter_user_id: string;
+  reporter_username: string;
+  reporter_first_name: string;
+  reporter_last_name: string;
+  target_user_id: string | null;
+  target_username: string | null;
+  target_first_name: string | null;
+  target_last_name: string | null;
+  message_id: string | null;
+  message_text: string | null;
+  notes: string | null;
+  decision_notes: string | null;
+  decided_by_user_id: string | null;
+  decided_by_username: string | null;
+  decided_by_first_name: string | null;
+  decided_by_last_name: string | null;
+  decided_at: number | null;
+  created_at: number;
+  updated_at: number;
+};
+
+type GroupMemberRestrictionRow = RowDataPacket & {
+  chat_id: string;
+  user_id: string;
+  muted_until: number | null;
+  mute_reason: string | null;
+  banned_at: number | null;
+  banned_by_user_id: string | null;
+  ban_reason: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
 type FriendRequestRow = RowDataPacket & {
   id: string;
   sender_id: string;
@@ -220,6 +293,18 @@ type FriendRequestRow = RowDataPacket & {
 
 type ProfileWithFriendRow = FriendProfileRow & {
   is_friend: number;
+};
+
+type NicknameSlotRow = RowDataPacket & {
+  id: string;
+  user_id: string;
+  nickname: string;
+  nickname_norm: string;
+  scope: NicknameScope;
+  chat_id: string | null;
+  chat_name: string | null;
+  created_at: number;
+  updated_at: number;
 };
 
 type AccountLookupRow = AccountRow & {
@@ -346,6 +431,17 @@ export class MessageCooldownError extends Error {
     const retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
     super(`Bitte warte ${retryAfterSeconds}s, bevor du erneut in diese Gruppe schreibst.`);
     this.name = 'MessageCooldownError';
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+export class GroupMutedError extends Error {
+  readonly retryAfterMs: number;
+
+  constructor(retryAfterMs: number) {
+    const retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
+    super(`Du bist in dieser Gruppe stummgeschaltet. Versuche es in ${retryAfterSeconds}s erneut.`);
+    this.name = 'GroupMutedError';
     this.retryAfterMs = retryAfterMs;
   }
 }
@@ -532,13 +628,16 @@ function mapProfile(
     bio: string;
     email: string | null;
     global_role: GlobalRole;
+    accent_color: string;
+    chat_background: ChatBackgroundPreset;
     avatar_updated_at: number | null;
   },
-  options?: { includeEmail?: boolean; isFriend?: boolean }
+  options?: { includeEmail?: boolean; isFriend?: boolean; displayName?: string; nicknameSlots?: AppNicknameSlot[] }
 ): AppUserProfile {
   const first = row.first_name ?? '';
   const last = row.last_name ?? '';
-  const fullName = `${first} ${last}`.trim() || row.username;
+  const legalName = `${first} ${last}`.trim() || row.username;
+  const fullName = options?.displayName?.trim() || legalName;
 
   return {
     id: row.user_id,
@@ -546,12 +645,42 @@ function mapProfile(
     firstName: first,
     lastName: last,
     fullName,
+    legalName,
     bio: row.bio ?? '',
     email: options?.includeEmail ? row.email : null,
     avatarUpdatedAt: asNullableNumber(row.avatar_updated_at),
     role: row.global_role,
+    accentColor: (row.accent_color ?? '').trim() || '#38bdf8',
+    chatBackground: toChatBackgroundPreset(row.chat_background),
+    nicknameSlots: options?.nicknameSlots,
     isFriend: options?.isFriend
   };
+}
+
+function fullNameFromParts(username: string | null, firstName: string | null, lastName: string | null): string {
+  return `${firstName ?? ''} ${lastName ?? ''}`.trim() || String(username ?? '').trim() || 'Unbekannt';
+}
+
+function toModerationReportStatus(value: unknown): AppModerationReportStatus {
+  if (value === 'reviewing' || value === 'resolved' || value === 'dismissed') {
+    return value;
+  }
+  return 'open';
+}
+
+function toModerationReportReason(value: unknown): AppModerationReportReason {
+  if (
+    value === 'spam' ||
+    value === 'harassment' ||
+    value === 'hate' ||
+    value === 'violence' ||
+    value === 'sexual' ||
+    value === 'impersonation' ||
+    value === 'privacy'
+  ) {
+    return value;
+  }
+  return 'other';
 }
 
 function normalizeAttachment(value: unknown): AppChatAttachment | null {
@@ -578,6 +707,12 @@ function normalizeAttachment(value: unknown): AppChatAttachment | null {
     uploadedAt,
     uploadedBy
   };
+}
+
+const CHAT_BACKGROUND_PRESETS: ChatBackgroundPreset[] = ['aurora', 'sunset', 'midnight', 'forest', 'paper'];
+
+function toChatBackgroundPreset(value: unknown): ChatBackgroundPreset {
+  return CHAT_BACKGROUND_PRESETS.includes(value as ChatBackgroundPreset) ? (value as ChatBackgroundPreset) : 'aurora';
 }
 
 function normalizeGif(value: unknown): AppChatGif | null {
@@ -777,6 +912,16 @@ function buildMessage(row: MessageRow, viewerUserId: string, readBy: AppChatRead
   };
 }
 
+function mapNicknameSlot(row: NicknameSlotRow): AppNicknameSlot {
+  return {
+    id: row.id,
+    nickname: row.nickname,
+    scope: row.scope,
+    chatId: row.chat_id ?? null,
+    chatName: row.chat_name?.trim() || null
+  };
+}
+
 export type UserSessionContext = {
   sessionId: string;
   tokenExpiresAt: number;
@@ -808,6 +953,8 @@ export class SocialStore {
           last_name,
           bio,
           global_role,
+          accent_color,
+          chat_background,
           avatar_updated_at,
           created_at,
           updated_at
@@ -840,6 +987,8 @@ export class SocialStore {
           a.last_name,
           a.bio,
           a.global_role,
+          a.accent_color,
+          a.chat_background,
           a.avatar_updated_at,
           a.created_at,
           a.updated_at,
@@ -1194,9 +1343,14 @@ export class SocialStore {
           a.bio,
           a.email,
           a.global_role,
+          a.accent_color,
+          a.chat_background,
           a.avatar_updated_at
         FROM chat_memberships cm
         JOIN auth_accounts a ON a.user_id = cm.user_id
+        LEFT JOIN group_member_restrictions gmr
+          ON gmr.chat_id = cm.chat_id
+         AND gmr.user_id = cm.user_id
         WHERE cm.chat_id = ?
           AND cm.left_at IS NULL
       `,
@@ -1241,15 +1395,41 @@ export class SocialStore {
     if (rows.length === 0) {
       return [];
     }
-    const receiptsByMessageId = await this.getChatReadReceiptsByMessageId(rows[0].chat_id, rows);
+    const [displayNames, receiptsByMessageId] = await Promise.all([
+      this.loadResolvedNicknamesForChat(rows[0].chat_id, rows.map((row) => row.user_id)),
+      this.getChatReadReceiptsByMessageId(rows[0].chat_id, rows)
+    ]);
     return rows
-      .map((row) => buildMessage(row, viewerUserId, receiptsByMessageId.get(row.id) ?? []))
+      .map((row) => {
+        const displayName = displayNames.get(row.user_id);
+        return buildMessage(
+          {
+            ...row,
+            first_name: displayName ?? row.first_name,
+            last_name: displayName ? '' : row.last_name
+          },
+          viewerUserId,
+          receiptsByMessageId.get(row.id) ?? []
+        );
+      })
       .filter((item): item is AppChatMessage => Boolean(item));
   }
 
   private async mapRowToMessage(row: MessageRow, viewerUserId: string): Promise<AppChatMessage | null> {
-    const receiptsByMessageId = await this.getChatReadReceiptsByMessageId(row.chat_id, [row]);
-    return buildMessage(row, viewerUserId, receiptsByMessageId.get(row.id) ?? []);
+    const [receiptsByMessageId, displayNames] = await Promise.all([
+      this.getChatReadReceiptsByMessageId(row.chat_id, [row]),
+      this.loadResolvedNicknamesForChat(row.chat_id, [row.user_id])
+    ]);
+    const displayName = displayNames.get(row.user_id);
+    return buildMessage(
+      {
+        ...row,
+        first_name: displayName ?? row.first_name,
+        last_name: displayName ? '' : row.last_name
+      },
+      viewerUserId,
+      receiptsByMessageId.get(row.id) ?? []
+    );
   }
 
   private async enforceMessageSpamProtection(userId: string, chatId: string, now = Date.now()): Promise<void> {
@@ -1416,6 +1596,8 @@ export class SocialStore {
           a.bio,
           a.email,
           a.global_role,
+          a.accent_color,
+          a.chat_background,
           a.avatar_updated_at
         FROM messages m
         JOIN auth_accounts a ON a.user_id = m.user_id
@@ -1466,6 +1648,7 @@ export class SocialStore {
     if (!role) {
       throw new Error('Chat not accessible.');
     }
+    await this.assertGroupUserCanPost(chatId, userId);
 
     const now = Date.now();
     this.cleanupTyping(now);
@@ -1512,6 +1695,8 @@ export class SocialStore {
           a.bio,
           a.email,
           a.global_role,
+          a.accent_color,
+          a.chat_background,
           a.avatar_updated_at
         FROM auth_accounts a
         WHERE a.user_id IN (${placeholders})
@@ -1524,7 +1709,9 @@ export class SocialStore {
 
   private mapChatSummary(row: ChatSummaryRow): AppChatSummary {
     const role = row.member_role ?? null;
-    const canManageMembers = row.chat_type === 'group' && (role === 'owner' || role === 'admin');
+    const canManageMembers = row.chat_type === 'group' && Boolean(
+      role && hasGroupCapability({ memberRole: role, globalRole: null }, 'manage_members')
+    );
     const inviteMode = row.chat_type === 'group' ? toGroupInviteMode(row.group_invite_mode) : null;
     const invitePolicy = row.chat_type === 'group' ? toGroupInvitePolicy(row.group_invite_policy) : null;
     const autoHideAfter24h = row.chat_type === 'group' ? asNumber(row.group_auto_hide_24h) === 1 : false;
@@ -1683,6 +1870,8 @@ export class SocialStore {
         bio: row.sender_bio,
         email: row.sender_email,
         global_role: row.sender_role,
+        accent_color: '#38bdf8',
+        chat_background: 'aurora',
         avatar_updated_at: row.sender_avatar_updated_at
       },
       { includeEmail: false }
@@ -1697,6 +1886,8 @@ export class SocialStore {
         bio: row.receiver_bio,
         email: row.receiver_email,
         global_role: row.receiver_role,
+        accent_color: '#38bdf8',
+        chat_background: 'aurora',
         avatar_updated_at: row.receiver_avatar_updated_at
       },
       { includeEmail: false }
@@ -2098,16 +2289,18 @@ export class SocialStore {
       throw new Error('Account not found.');
     }
 
-    const [chats, friends, requests] = await Promise.all([
+    const [chats, friends, requests, nicknameSlots] = await Promise.all([
       this.listChats(userId),
       this.listFriends(userId),
-      this.listFriendRequests(userId)
+      this.listFriendRequests(userId),
+      this.listNicknameSlots(userId)
     ]);
+    const globalNickname = nicknameSlots.find((slot) => slot.scope === 'global')?.nickname ?? undefined;
 
     const activeChatId = chats.find((chat) => chat.id === requestedChatId)?.id ?? chats[0]?.id ?? null;
 
     return {
-      me: mapProfile(meAccount, { includeEmail: true }),
+      me: mapProfile(meAccount, { includeEmail: true, displayName: globalNickname, nicknameSlots }),
       chats,
       activeChatId,
       friends,
@@ -2131,6 +2324,8 @@ export class SocialStore {
           a.bio,
           a.email,
           a.global_role,
+          a.accent_color,
+          a.chat_background,
           a.avatar_updated_at,
           CASE
             WHEN EXISTS (
@@ -2174,6 +2369,8 @@ export class SocialStore {
           a.bio,
           a.email,
           a.global_role,
+          a.accent_color,
+          a.chat_background,
           a.avatar_updated_at,
           CASE
             WHEN EXISTS (
@@ -2197,13 +2394,99 @@ export class SocialStore {
     if (!row) {
       return null;
     }
+    const nicknameSlots = viewerId === targetId ? await this.listNicknameSlots(targetId) : undefined;
+    const globalNickname = nicknameSlots?.find((slot) => slot.scope === 'global')?.nickname ?? undefined;
+    return mapProfile(row, {
+      isFriend: asNumber(row.is_friend) === 1,
+      includeEmail: viewerId === targetId,
+      displayName: globalNickname,
+      nicknameSlots
+    });
+  }
 
-    return mapProfile(row, { isFriend: asNumber(row.is_friend) === 1, includeEmail: viewerId === targetId });
+  async listNicknameSlots(userId: string): Promise<AppNicknameSlot[]> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const [rows] = await pool.query<NicknameSlotRow[]>(
+      `
+        SELECT
+          s.id,
+          s.user_id,
+          s.nickname,
+          s.nickname_norm,
+          s.scope,
+          s.chat_id,
+          c.name AS chat_name,
+          s.created_at,
+          s.updated_at
+        FROM user_nickname_slots s
+        LEFT JOIN chats c ON c.id = s.chat_id
+        WHERE s.user_id = ?
+        ORDER BY s.updated_at DESC, s.created_at DESC
+      `,
+      [userId]
+    );
+    return rows.map(mapNicknameSlot);
+  }
+
+  private async loadResolvedNicknamesForChat(chatId: string, userIds: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    const normalizedUserIds = normalizeIds(userIds);
+    if (normalizedUserIds.length === 0) {
+      return out;
+    }
+    const pool = getMysqlPool();
+    const placeholders = normalizedUserIds.map(() => '?').join(',');
+    const [rows] = await pool.query<NicknameSlotRow[]>(
+      `
+        SELECT
+          s.id,
+          s.user_id,
+          s.nickname,
+          s.nickname_norm,
+          s.scope,
+          s.chat_id,
+          c.name AS chat_name,
+          s.created_at,
+          s.updated_at
+        FROM user_nickname_slots s
+        LEFT JOIN chats c ON c.id = s.chat_id
+        WHERE s.user_id IN (${placeholders})
+          AND (
+            s.scope = 'global'
+            OR (s.scope = 'chat' AND s.chat_id = ?)
+          )
+        ORDER BY
+          s.scope = 'chat' DESC,
+          s.updated_at DESC,
+          s.created_at DESC
+      `,
+      [...normalizedUserIds, chatId]
+    );
+    for (const row of rows) {
+      if (!out.has(row.user_id)) {
+        out.set(row.user_id, row.nickname);
+      }
+    }
+    return out;
   }
 
   async updateMyProfile(
     userId: string,
-    input: { firstName: string; lastName: string; bio: string; email: string | null }
+    input: {
+      firstName: string;
+      lastName: string;
+      bio: string;
+      email: string | null;
+      accentColor: string;
+      chatBackground: ChatBackgroundPreset;
+      nicknameSlots: Array<{
+        id?: string | null;
+        nickname: string;
+        scope: NicknameScope;
+        chatId: string | null;
+      }>;
+    }
   ): Promise<AppUserProfile> {
     await this.ensureReady();
     const pool = getMysqlPool();
@@ -2214,12 +2497,21 @@ export class SocialStore {
     const email = input.email?.trim() ? input.email.trim() : null;
     const emailNorm = email ? normalizeEmail(email) : null;
     const displayName = `${firstName} ${lastName}`.trim();
+    const accentColor = input.accentColor.trim().slice(0, 7) || '#38bdf8';
+    const chatBackground = toChatBackgroundPreset(input.chatBackground);
+    const nicknameSlots = input.nicknameSlots.slice(0, APP_LIMITS.profileNicknameSlotsMax);
 
     await this.assertAllowedIdentity({
       firstName,
       lastName,
       email
     });
+
+    for (const slot of nicknameSlots) {
+      await this.assertAllowedIdentity({
+        firstName: slot.nickname
+      });
+    }
 
     if (emailNorm) {
       const [rows] = await pool.query<RowDataPacket[]>(
@@ -2234,10 +2526,10 @@ export class SocialStore {
     await pool.query<ResultSetHeader>(
       `
         UPDATE auth_accounts
-        SET first_name = ?, last_name = ?, bio = ?, email = ?, email_norm = ?, updated_at = ?
+        SET first_name = ?, last_name = ?, bio = ?, email = ?, email_norm = ?, accent_color = ?, chat_background = ?, updated_at = ?
         WHERE user_id = ?
       `,
-      [firstName, lastName, bio, email, emailNorm, now, userId]
+      [firstName, lastName, bio, email, emailNorm, accentColor, chatBackground, now, userId]
     );
 
     await pool.query<ResultSetHeader>('UPDATE users SET name = ?, updated_at = ? WHERE id = ?', [
@@ -2246,12 +2538,58 @@ export class SocialStore {
       userId
     ]);
 
+    const existingSlots = await this.listNicknameSlots(userId);
+    const existingIds = new Set(existingSlots.map((slot) => slot.id));
+    const seenSlotKeys = new Set<string>();
+
+    for (const slot of nicknameSlots) {
+      const slotId = slot.id?.trim() && existingIds.has(slot.id.trim()) ? slot.id.trim() : randomUUID();
+      const scope = slot.scope === 'chat' ? 'chat' : 'global';
+      const chatId = scope === 'chat' ? slot.chatId?.trim() || null : null;
+      const nickname = slot.nickname.trim().slice(0, APP_LIMITS.profileNicknameMax);
+      const nicknameNorm = normalizeName(nickname).toLowerCase();
+      const dedupeKey = `${scope}:${chatId ?? 'global'}`;
+      if (seenSlotKeys.has(dedupeKey)) {
+        throw new Error('Only one nickname per scope/chat is allowed.');
+      }
+      seenSlotKeys.add(dedupeKey);
+      if (scope === 'chat' && !chatId) {
+        throw new Error('Chat nickname requires a chatId.');
+      }
+      if (scope === 'chat') {
+        const role = await this.getMembershipRole(userId, chatId!);
+        if (!role) {
+          throw new Error('Chat-specific nickname requires membership in that chat.');
+        }
+      }
+
+      await pool.query<ResultSetHeader>(
+        `
+          INSERT INTO user_nickname_slots (id, user_id, nickname, nickname_norm, scope, chat_id, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            nickname = VALUES(nickname),
+            nickname_norm = VALUES(nickname_norm),
+            scope = VALUES(scope),
+            chat_id = VALUES(chat_id),
+            updated_at = VALUES(updated_at)
+        `,
+        [slotId, userId, nickname, nicknameNorm, scope, chatId, now, now]
+      );
+      existingIds.delete(slotId);
+    }
+
+    for (const staleId of existingIds) {
+      await pool.query<ResultSetHeader>('DELETE FROM user_nickname_slots WHERE id = ? AND user_id = ?', [staleId, userId]);
+    }
+
     const account = await this.getAccountByUserId(userId);
     if (!account) {
       throw new Error('Profile not found.');
     }
-
-    return mapProfile(account, { includeEmail: true });
+    const nextNicknameSlots = await this.listNicknameSlots(userId);
+    const globalNickname = nextNicknameSlots.find((slot) => slot.scope === 'global')?.nickname ?? undefined;
+    return mapProfile(account, { includeEmail: true, displayName: globalNickname, nicknameSlots: nextNicknameSlots });
   }
 
   async setAvatar(userId: string, mimeType: string, buffer: Buffer): Promise<number> {
@@ -2438,11 +2776,7 @@ export class SocialStore {
       [chatId, userId]
     );
 
-    const role = rows[0]?.member_role;
-    if (role === 'owner' || role === 'admin' || role === 'member') {
-      return role;
-    }
-    return null;
+    return isGroupMemberRole(rows[0]?.member_role) ? rows[0].member_role : null;
   }
 
   private async getGroupChatControl(chatId: string): Promise<GroupChatControlRow | null> {
@@ -2473,32 +2807,76 @@ export class SocialStore {
     return rows[0] ?? null;
   }
 
-  private canManageGroupUsers(role: GroupMemberRole): boolean {
-    return role === 'owner' || role === 'admin';
+  private async getGroupPermissionState(userId: string, chatId: string): Promise<GroupPermissionState | null> {
+    const [chat, account, memberRole] = await Promise.all([
+      this.getGroupChatControl(chatId),
+      this.getAccountByUserId(userId),
+      this.getMembershipRole(userId, chatId)
+    ]);
+    if (!chat) {
+      return null;
+    }
+
+    return {
+      chat,
+      context: {
+        memberRole,
+        globalRole: account?.global_role ?? null,
+        invitePolicy: toGroupInvitePolicy(chat.group_invite_policy),
+        everyoneMentionPolicy: toGroupMentionPolicy(chat.group_everyone_mention_policy),
+        hereMentionPolicy: toGroupMentionPolicy(chat.group_here_mention_policy)
+      }
+    };
   }
 
-  private canManageGroupSettings(role: GroupMemberRole): boolean {
-    return role === 'owner';
+  private async getGroupMemberRestriction(chatId: string, userId: string): Promise<GroupMemberRestrictionRow | null> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const [rows] = await pool.query<GroupMemberRestrictionRow[]>(
+      `
+        SELECT
+          chat_id,
+          user_id,
+          muted_until,
+          mute_reason,
+          banned_at,
+          banned_by_user_id,
+          ban_reason,
+          created_at,
+          updated_at
+        FROM group_member_restrictions
+        WHERE chat_id = ?
+          AND user_id = ?
+        LIMIT 1
+      `,
+      [chatId, userId]
+    );
+    return rows[0] ?? null;
   }
 
-  private canInviteDirectly(role: GroupMemberRole, policy: GroupInvitePolicy): boolean {
-    if (policy === 'everyone') {
-      return role === 'owner' || role === 'admin' || role === 'member';
+  private async assertGroupUserNotBanned(chatId: string, userId: string): Promise<void> {
+    const restriction = await this.getGroupMemberRestriction(chatId, userId);
+    if (restriction && asNullableNumber(restriction.banned_at)) {
+      throw new PermissionDeniedError('Dieser Nutzer ist für diese Gruppe gesperrt.');
     }
-    if (policy === 'owner') {
-      return role === 'owner';
-    }
-    return role === 'owner' || role === 'admin';
   }
 
-  private canUseMentionByPolicy(role: GroupMemberRole, policy: GroupMentionPolicy): boolean {
-    if (policy === 'everyone') {
-      return role === 'owner' || role === 'admin' || role === 'member';
+  private async assertGroupUserCanPost(chatId: string, userId: string): Promise<void> {
+    const restriction = await this.getGroupMemberRestriction(chatId, userId);
+    const now = Date.now();
+    const mutedUntil = restriction ? asNullableNumber(restriction.muted_until) : null;
+    if (mutedUntil && mutedUntil > now) {
+      throw new GroupMutedError(mutedUntil - now);
     }
-    if (policy === 'owner') {
-      return role === 'owner';
+  }
+
+  private async assertGroupCapability(userId: string, chatId: string, capability: GroupCapability, message: string): Promise<GroupPermissionState> {
+    const state = await this.getGroupPermissionState(userId, chatId);
+    if (!state) {
+      throw new Error('Chat not found.');
     }
-    return role === 'owner' || role === 'admin';
+    assertGroupCapability(state.context, capability, message);
+    return state;
   }
 
   private buildGroupSettings(chat: GroupChatControlRow, role: GroupMemberRole): AppGroupSettings {
@@ -2506,8 +2884,15 @@ export class SocialStore {
     const invitePolicy = toGroupInvitePolicy(chat.group_invite_policy);
     const everyoneMentionPolicy = toGroupMentionPolicy(chat.group_everyone_mention_policy);
     const hereMentionPolicy = toGroupMentionPolicy(chat.group_here_mention_policy);
-    const canManageUsers = this.canManageGroupUsers(role);
-    const canManageSettings = this.canManageGroupSettings(role);
+    const context: GroupPermissionContext = {
+      memberRole: role,
+      globalRole: null,
+      invitePolicy,
+      everyoneMentionPolicy,
+      hereMentionPolicy
+    };
+    const canManageUsers = hasGroupCapability(context, 'manage_members');
+    const canManageSettings = hasGroupCapability(context, 'manage_settings');
 
     return {
       inviteMode,
@@ -2518,15 +2903,17 @@ export class SocialStore {
         : null,
       autoHideAfter24h: asNumber(chat.group_auto_hide_24h) === 1,
       messageCooldownMs: normalizeGroupMessageCooldownMs(asNumber(chat.group_message_cooldown_ms, CHAT_LIMITS.defaultGroupMessageCooldownMs)),
-      canInviteDirectly: canManageUsers && inviteMode === 'direct' && this.canInviteDirectly(role, invitePolicy),
+      canInviteDirectly: inviteMode === 'direct' && hasGroupCapability(context, 'invite_members'),
       canManageUsers,
       canManageSettings,
-      canTransferOwnership: role === 'owner',
-      canCloseGroup: role === 'owner',
+      canModerateMessages: hasGroupCapability(context, 'moderate_messages'),
+      canViewModerationLogs: hasGroupCapability(context, 'view_moderation_logs'),
+      canTransferOwnership: hasGroupCapability(context, 'transfer_ownership'),
+      canCloseGroup: hasGroupCapability(context, 'close_group'),
       everyoneMentionPolicy,
       hereMentionPolicy,
-      canUseEveryoneMention: this.canUseMentionByPolicy(role, everyoneMentionPolicy),
-      canUseHereMention: this.canUseMentionByPolicy(role, hereMentionPolicy)
+      canUseEveryoneMention: hasGroupCapability(context, 'use_everyone_mention'),
+      canUseHereMention: hasGroupCapability(context, 'use_here_mention')
     };
   }
 
@@ -2727,31 +3114,28 @@ export class SocialStore {
     userId: string,
     chatId: string,
     targetUserId: string,
-    action: 'invite' | 'promote' | 'demote' | 'kick' | 'transfer_ownership'
+    action: 'invite' | 'promote' | 'demote' | 'kick' | 'transfer_ownership' | 'set_role' | 'mute_1h' | 'mute_24h' | 'unmute' | 'ban' | 'unban',
+    nextRole?: GroupMemberRole | null,
+    moderationReason?: string | null
   ): Promise<void> {
     await this.ensureReady();
     const pool = getMysqlPool();
     const now = Date.now();
 
-    const chat = await this.getGroupChatControl(chatId);
-    if (!chat?.id || chat.chat_type !== 'group' || asNullableNumber(chat.deactivated_at)) {
+    const permissionState = await this.getGroupPermissionState(userId, chatId);
+    const chat = permissionState?.chat ?? null;
+    const actorContext = permissionState?.context ?? null;
+    if (!chat?.id || !actorContext || chat.chat_type !== 'group' || asNullableNumber(chat.deactivated_at)) {
       throw new Error('Only group chats can be managed.');
     }
-
-    const actorRole = await this.getMembershipRole(userId, chatId);
-    if (!actorRole) {
-      throw new Error('Chat not accessible.');
-    }
+    const actorRole = actorContext.memberRole;
 
     if (action === 'invite') {
       const inviteMode = toGroupInviteMode(chat.group_invite_mode);
-      const invitePolicy = toGroupInvitePolicy(chat.group_invite_policy);
       if (inviteMode === 'invite_link') {
         throw new Error('Direktes Hinzufuegen ist deaktiviert. Nutze den Invite-Link.');
       }
-      if (!this.canInviteDirectly(actorRole, invitePolicy)) {
-        throw new Error('Insufficient group permissions.');
-      }
+      assertGroupCapability(actorContext, 'invite_members', 'Insufficient group permissions.');
 
       const [targetRows] = await pool.query<RowDataPacket[]>(
         `
@@ -2767,6 +3151,7 @@ export class SocialStore {
       if (targetRows.length === 0) {
         throw new Error('Target user not found.');
       }
+      await this.assertGroupUserNotBanned(chatId, targetUserId);
 
       await pool.query<ResultSetHeader>(
         `
@@ -2784,13 +3169,23 @@ export class SocialStore {
       return;
     }
 
-    if (!this.canManageGroupUsers(actorRole) && action !== 'transfer_ownership') {
-      throw new Error('Insufficient group permissions.');
+    const targetRole = await this.getMembershipRole(targetUserId, chatId);
+    if (!targetRole && action !== 'unban') {
+      throw new Error('Target user is not part of this group.');
+    }
+    if (action === 'unban') {
+      const targetAccount = await this.getAccountByUserId(targetUserId);
+      if (!targetAccount) {
+        throw new Error('Target user not found.');
+      }
     }
 
-    const targetRole = await this.getMembershipRole(targetUserId, chatId);
-    if (!targetRole) {
-      throw new Error('Target user is not part of this group.');
+    if (action === 'transfer_ownership') {
+      assertGroupCapability(actorContext, 'transfer_ownership', 'Only group owner can transfer ownership.');
+    } else if (action === 'mute_1h' || action === 'mute_24h' || action === 'unmute' || action === 'ban' || action === 'unban') {
+      assertGroupCapability(actorContext, 'moderate_messages', 'Insufficient group permissions.');
+    } else {
+      assertGroupCapability(actorContext, 'manage_members', 'Insufficient group permissions.');
     }
 
     if (targetUserId === userId && action !== 'transfer_ownership') {
@@ -2801,8 +3196,17 @@ export class SocialStore {
       throw new Error('Group owner cannot be modified.');
     }
 
+    const actorComparableRole = actorRole ?? (actorContext.globalRole === 'superadmin' ? 'owner' : null);
+    const normalizedModerationReason = moderationReason?.trim().slice(0, 255) || null;
+    if (!actorComparableRole) {
+      throw new PermissionDeniedError('Insufficient group permissions.');
+    }
+    if (action !== 'transfer_ownership' && targetRole && !canManageRole(actorComparableRole, targetRole)) {
+      throw new PermissionDeniedError('You cannot manage a member with the same or higher role.');
+    }
+
     if (action === 'promote') {
-      if (actorRole !== 'owner') {
+      if (actorComparableRole !== 'owner') {
         throw new Error('Only owner can promote.');
       }
       if (targetRole !== 'member') {
@@ -2820,7 +3224,7 @@ export class SocialStore {
     }
 
     if (action === 'demote') {
-      if (actorRole !== 'owner') {
+      if (actorComparableRole !== 'owner') {
         throw new Error('Only owner can demote.');
       }
       if (targetRole !== 'admin') {
@@ -2837,10 +3241,45 @@ export class SocialStore {
       return;
     }
 
-    if (action === 'kick') {
-      if (actorRole === 'admin' && targetRole !== 'member') {
-        throw new Error('Admins can only kick members.');
+    if (action === 'set_role') {
+      if (!nextRole) {
+        throw new Error('A target role is required.');
       }
+      if (!isGroupMemberRole(nextRole)) {
+        throw new Error('Invalid target role.');
+      }
+      if (nextRole === 'owner') {
+        throw new Error('Use ownership transfer to assign owner.');
+      }
+      if (targetRole === nextRole) {
+        return;
+      }
+      if (actorComparableRole !== 'owner' && nextRole === 'admin') {
+        throw new Error('Only owner can assign admin.');
+      }
+      if (actorComparableRole !== 'owner' && targetRole === 'admin') {
+        throw new Error('Only owner can change admin roles.');
+      }
+      if (!canManageRole(actorComparableRole, nextRole)) {
+        throw new PermissionDeniedError('You cannot assign a role equal to or higher than your own.');
+      }
+
+      await pool.query<ResultSetHeader>(
+        'UPDATE chat_memberships SET member_role = ? WHERE chat_id = ? AND user_id = ? AND left_at IS NULL',
+        [nextRole, chatId, targetUserId]
+      );
+      await pool.query<ResultSetHeader>('UPDATE chats SET updated_at = ? WHERE id = ?', [now, chatId]);
+      await this.appendGroupModerationLog(chatId, 'member_role_changed', userId, {
+        targetUserId,
+        details: {
+          fromRole: targetRole,
+          toRole: nextRole
+        }
+      });
+      return;
+    }
+
+    if (action === 'kick') {
       await pool.query<ResultSetHeader>(
         'UPDATE chat_memberships SET left_at = ? WHERE chat_id = ? AND user_id = ? AND left_at IS NULL',
         [now, chatId, targetUserId]
@@ -2852,10 +3291,137 @@ export class SocialStore {
       return;
     }
 
+    if (action === 'mute_1h' || action === 'mute_24h') {
+      const durationMs = action === 'mute_1h' ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+      const mutedUntil = now + durationMs;
+      await pool.query<ResultSetHeader>(
+        `
+          INSERT INTO group_member_restrictions (
+            chat_id,
+            user_id,
+            muted_until,
+            mute_reason,
+            banned_at,
+            banned_by_user_id,
+            ban_reason,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            muted_until = VALUES(muted_until),
+            mute_reason = VALUES(mute_reason),
+            updated_at = VALUES(updated_at)
+        `,
+        [chatId, targetUserId, mutedUntil, normalizedModerationReason ?? (action === 'mute_1h' ? 'temporary_1h' : 'temporary_24h'), now, now]
+      );
+      await pool.query<ResultSetHeader>('UPDATE chats SET updated_at = ? WHERE id = ?', [now, chatId]);
+      await this.appendGroupModerationLog(chatId, 'member_muted', userId, {
+        targetUserId,
+        details: {
+          mutedUntil,
+          durationMs,
+          reason: normalizedModerationReason
+        }
+      });
+      return;
+    }
+
+    if (action === 'unmute') {
+      await pool.query<ResultSetHeader>(
+        `
+          INSERT INTO group_member_restrictions (
+            chat_id,
+            user_id,
+            muted_until,
+            mute_reason,
+            banned_at,
+            banned_by_user_id,
+            ban_reason,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            muted_until = NULL,
+            mute_reason = NULL,
+            updated_at = VALUES(updated_at)
+        `,
+        [chatId, targetUserId, now, now]
+      );
+      await this.appendGroupModerationLog(chatId, 'member_unmuted', userId, {
+        targetUserId
+      });
+      return;
+    }
+
+    if (action === 'ban') {
+      await pool.query<ResultSetHeader>(
+        `
+          INSERT INTO group_member_restrictions (
+            chat_id,
+            user_id,
+            muted_until,
+            mute_reason,
+            banned_at,
+            banned_by_user_id,
+            ban_reason,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            banned_at = VALUES(banned_at),
+            banned_by_user_id = VALUES(banned_by_user_id),
+            ban_reason = VALUES(ban_reason),
+            updated_at = VALUES(updated_at)
+        `,
+        [chatId, targetUserId, now, userId, normalizedModerationReason ?? 'group_ban', now, now]
+      );
+      await pool.query<ResultSetHeader>(
+        'UPDATE chat_memberships SET left_at = ? WHERE chat_id = ? AND user_id = ? AND left_at IS NULL',
+        [now, chatId, targetUserId]
+      );
+      await pool.query<ResultSetHeader>('UPDATE chats SET updated_at = ? WHERE id = ?', [now, chatId]);
+      await this.appendGroupModerationLog(chatId, 'member_banned', userId, {
+        targetUserId,
+        details: {
+          reason: normalizedModerationReason
+        }
+      });
+      return;
+    }
+
+    if (action === 'unban') {
+      await pool.query<ResultSetHeader>(
+        `
+          INSERT INTO group_member_restrictions (
+            chat_id,
+            user_id,
+            muted_until,
+            mute_reason,
+            banned_at,
+            banned_by_user_id,
+            ban_reason,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            banned_at = NULL,
+            banned_by_user_id = NULL,
+            ban_reason = NULL,
+            updated_at = VALUES(updated_at)
+        `,
+        [chatId, targetUserId, now, now]
+      );
+      await this.appendGroupModerationLog(chatId, 'member_unbanned', userId, {
+        targetUserId
+      });
+      return;
+    }
+
     if (action === 'transfer_ownership') {
-      if (actorRole !== 'owner') {
-        throw new Error('Only group owner can transfer ownership.');
-      }
       if (targetUserId === userId) {
         throw new Error('Select another member for ownership transfer.');
       }
@@ -2899,15 +3465,12 @@ export class SocialStore {
     await this.ensureReady();
     const pool = getMysqlPool();
     const now = Date.now();
-    const chat = await this.getGroupChatControl(chatId);
+    const state = await this.assertGroupCapability(userId, chatId, 'manage_settings', 'Only group owner can change settings.');
+    const chat = state.chat;
     if (!chat?.id || chat.chat_type !== 'group' || asNullableNumber(chat.deactivated_at)) {
       throw new Error('Only active group chats can be configured.');
     }
-
-    const role = await this.getMembershipRole(userId, chatId);
-    if (role !== 'owner') {
-      throw new Error('Only group owner can change settings.');
-    }
+    const role = state.context.memberRole ?? 'owner';
 
     const inviteMode = toGroupInviteMode(input.inviteMode);
     const invitePolicy = toGroupInvitePolicy(input.invitePolicy);
@@ -2973,15 +3536,12 @@ export class SocialStore {
     await this.ensureReady();
     const pool = getMysqlPool();
     const now = Date.now();
-    const chat = await this.getGroupChatControl(chatId);
+    const state = await this.assertGroupCapability(userId, chatId, 'manage_settings', 'Only group owner can regenerate invite links.');
+    const chat = state.chat;
     if (!chat?.id || chat.chat_type !== 'group' || asNullableNumber(chat.deactivated_at)) {
       throw new Error('Only active group chats can be configured.');
     }
-
-    const role = await this.getMembershipRole(userId, chatId);
-    if (role !== 'owner') {
-      throw new Error('Only group owner can regenerate invite links.');
-    }
+    const role = state.context.memberRole ?? 'owner';
 
     let updated = false;
     for (let attempts = 0; attempts < 5; attempts += 1) {
@@ -3017,14 +3577,10 @@ export class SocialStore {
     await this.ensureReady();
     const pool = getMysqlPool();
     const now = Date.now();
-    const chat = await this.getGroupChatControl(chatId);
+    const state = await this.assertGroupCapability(userId, chatId, 'close_group', 'Only group owner can close the group.');
+    const chat = state.chat;
     if (!chat?.id || chat.chat_type !== 'group' || asNullableNumber(chat.deactivated_at)) {
       throw new Error('Only active group chats can be closed.');
-    }
-
-    const role = await this.getMembershipRole(userId, chatId);
-    if (role !== 'owner') {
-      throw new Error('Only group owner can close the group.');
     }
 
     await pool.query<ResultSetHeader>(
@@ -3037,16 +3593,10 @@ export class SocialStore {
   async listGroupModerationLogs(userId: string, chatId: string, limit = 80): Promise<AppModerationLog[]> {
     await this.ensureReady();
     const pool = getMysqlPool();
-    const chat = await this.getGroupChatControl(chatId);
+    const state = await this.assertGroupCapability(userId, chatId, 'view_moderation_logs', 'Insufficient group permissions.');
+    const chat = state.chat;
     if (!chat?.id || chat.chat_type !== 'group') {
       throw new Error('Only group chats are supported.');
-    }
-
-    const membershipRole = await this.getMembershipRole(userId, chatId);
-    const account = await this.getAccountByUserId(userId);
-    const canView = membershipRole === 'owner' || membershipRole === 'admin' || account?.global_role === 'superadmin';
-    if (!canView) {
-      throw new Error('Insufficient group permissions.');
     }
 
     const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
@@ -3106,6 +3656,310 @@ export class SocialStore {
     });
   }
 
+  private mapModerationReport(row: ModerationReportRow): AppModerationReport {
+    return {
+      id: row.id,
+      chatId: row.chat_id,
+      status: toModerationReportStatus(row.status),
+      reason: toModerationReportReason(row.reason),
+      reporterUserId: row.reporter_user_id,
+      reporterName: fullNameFromParts(row.reporter_username, row.reporter_first_name, row.reporter_last_name),
+      targetUserId: row.target_user_id ?? null,
+      targetName: row.target_user_id
+        ? fullNameFromParts(row.target_username, row.target_first_name, row.target_last_name)
+        : null,
+      messageId: row.message_id ?? null,
+      messagePreview: row.message_text?.trim().slice(0, 180) || null,
+      notes: row.notes?.trim() || null,
+      decisionNotes: row.decision_notes?.trim() || null,
+      decidedByUserId: row.decided_by_user_id ?? null,
+      decidedByName: row.decided_by_user_id
+        ? fullNameFromParts(row.decided_by_username, row.decided_by_first_name, row.decided_by_last_name)
+        : null,
+      decidedAt: asNullableNumber(row.decided_at),
+      createdAt: asNumber(row.created_at),
+      updatedAt: asNumber(row.updated_at)
+    };
+  }
+
+  async createModerationReport(
+    userId: string,
+    chatId: string,
+    input: {
+      messageId?: string | null;
+      targetUserId?: string | null;
+      reason: AppModerationReportReason;
+      notes?: string | null;
+    }
+  ): Promise<AppModerationReport> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const now = Date.now();
+    const state = await this.assertGroupCapability(userId, chatId, 'view_chat', 'Chat not accessible.');
+    const chat = state.chat;
+    if (!chat?.id || chat.chat_type !== 'group' || asNullableNumber(chat.deactivated_at)) {
+      throw new Error('Only active group chats support reports.');
+    }
+
+    const messageId = input.messageId?.trim() || null;
+    const targetUserId = input.targetUserId?.trim() || null;
+    const reason = toModerationReportReason(input.reason);
+    const notes = input.notes?.trim().slice(0, 500) || null;
+
+    if (!messageId && !targetUserId) {
+      throw new Error('Report target is required.');
+    }
+
+    let resolvedTargetUserId = targetUserId;
+    let messagePreview: string | null = null;
+
+    if (messageId) {
+      const messageRow = await this.loadMessageRow(chatId, messageId);
+      if (!messageRow) {
+        throw new Error('Message not found.');
+      }
+      resolvedTargetUserId = resolvedTargetUserId ?? messageRow.user_id;
+      messagePreview = messageRow.text?.trim().slice(0, 180) || null;
+    }
+
+    if (resolvedTargetUserId) {
+      const targetRole = await this.getMembershipRole(resolvedTargetUserId, chatId);
+      if (!targetRole) {
+        throw new Error('Target user is not part of this group.');
+      }
+    }
+
+    if (resolvedTargetUserId === userId) {
+      throw new Error('You cannot report yourself.');
+    }
+
+    const [existingRows] = await pool.query<RowDataPacket[]>(
+      `
+        SELECT id
+        FROM moderation_reports
+        WHERE chat_id = ?
+          AND reporter_user_id = ?
+          AND COALESCE(target_user_id, '') = COALESCE(?, '')
+          AND COALESCE(message_id, '') = COALESCE(?, '')
+          AND reason = ?
+          AND status IN ('open', 'reviewing')
+        LIMIT 1
+      `,
+      [chatId, userId, resolvedTargetUserId, messageId, reason]
+    );
+    if (existingRows.length > 0) {
+      throw new Error('An active report for this target already exists.');
+    }
+
+    const reportId = randomUUID();
+    await pool.query<ResultSetHeader>(
+      `
+        INSERT INTO moderation_reports (
+          id,
+          chat_id,
+          reporter_user_id,
+          target_user_id,
+          message_id,
+          status,
+          reason,
+          notes,
+          decision_notes,
+          decided_by_user_id,
+          decided_at,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, 'open', ?, ?, NULL, NULL, NULL, ?, ?)
+      `,
+      [reportId, chatId, userId, resolvedTargetUserId, messageId, reason, notes, now, now]
+    );
+
+    await this.appendGroupModerationLog(chatId, 'report_created', userId, {
+      targetUserId: resolvedTargetUserId,
+      messageId,
+      details: {
+        reportId,
+        reason,
+        notes,
+        messagePreview
+      }
+    });
+
+    const report = await this.getModerationReportById(chatId, reportId);
+    if (!report) {
+      throw new Error('Report could not be loaded.');
+    }
+    return report;
+  }
+
+  private async getModerationReportById(chatId: string, reportId: string): Promise<AppModerationReport | null> {
+    const pool = getMysqlPool();
+    const [rows] = await pool.query<ModerationReportRow[]>(
+      `
+        SELECT
+          r.id,
+          r.chat_id,
+          r.status,
+          r.reason,
+          r.reporter_user_id,
+          ra.username AS reporter_username,
+          ra.first_name AS reporter_first_name,
+          ra.last_name AS reporter_last_name,
+          r.target_user_id,
+          ta.username AS target_username,
+          ta.first_name AS target_first_name,
+          ta.last_name AS target_last_name,
+          r.message_id,
+          m.text AS message_text,
+          r.notes,
+          r.decision_notes,
+          r.decided_by_user_id,
+          da.username AS decided_by_username,
+          da.first_name AS decided_by_first_name,
+          da.last_name AS decided_by_last_name,
+          r.decided_at,
+          r.created_at,
+          r.updated_at
+        FROM moderation_reports r
+        JOIN auth_accounts ra ON ra.user_id = r.reporter_user_id
+        LEFT JOIN auth_accounts ta ON ta.user_id = r.target_user_id
+        LEFT JOIN auth_accounts da ON da.user_id = r.decided_by_user_id
+        LEFT JOIN messages m ON m.id = r.message_id
+        WHERE r.chat_id = ?
+          AND r.id = ?
+        LIMIT 1
+      `,
+      [chatId, reportId]
+    );
+    const row = rows[0] ?? null;
+    return row ? this.mapModerationReport(row) : null;
+  }
+
+  async listModerationReports(
+    userId: string,
+    chatId: string,
+    options?: {
+      status?: AppModerationReportStatus | 'all';
+      limit?: number;
+    }
+  ): Promise<AppModerationReport[]> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const state = await this.assertGroupCapability(userId, chatId, 'view_moderation_logs', 'Insufficient group permissions.');
+    const chat = state.chat;
+    if (!chat?.id || chat.chat_type !== 'group') {
+      throw new Error('Only group chats are supported.');
+    }
+
+    const limit = Math.max(1, Math.min(200, Math.floor(options?.limit ?? 100)));
+    const status = options?.status && options.status !== 'all' ? toModerationReportStatus(options.status) : null;
+    const [rows] = await pool.query<ModerationReportRow[]>(
+      `
+        SELECT
+          r.id,
+          r.chat_id,
+          r.status,
+          r.reason,
+          r.reporter_user_id,
+          ra.username AS reporter_username,
+          ra.first_name AS reporter_first_name,
+          ra.last_name AS reporter_last_name,
+          r.target_user_id,
+          ta.username AS target_username,
+          ta.first_name AS target_first_name,
+          ta.last_name AS target_last_name,
+          r.message_id,
+          m.text AS message_text,
+          r.notes,
+          r.decision_notes,
+          r.decided_by_user_id,
+          da.username AS decided_by_username,
+          da.first_name AS decided_by_first_name,
+          da.last_name AS decided_by_last_name,
+          r.decided_at,
+          r.created_at,
+          r.updated_at
+        FROM moderation_reports r
+        JOIN auth_accounts ra ON ra.user_id = r.reporter_user_id
+        LEFT JOIN auth_accounts ta ON ta.user_id = r.target_user_id
+        LEFT JOIN auth_accounts da ON da.user_id = r.decided_by_user_id
+        LEFT JOIN messages m ON m.id = r.message_id
+        WHERE r.chat_id = ?
+          AND (? IS NULL OR r.status = ?)
+        ORDER BY
+          FIELD(r.status, 'open', 'reviewing', 'resolved', 'dismissed'),
+          r.updated_at DESC
+        LIMIT ?
+      `,
+      [chatId, status, status, limit]
+    );
+    return rows.map((row) => this.mapModerationReport(row));
+  }
+
+  async decideModerationReport(
+    userId: string,
+    chatId: string,
+    reportId: string,
+    input: {
+      status: AppModerationReportStatus;
+      decisionNotes?: string | null;
+      moderationAction?: 'mute_1h' | 'mute_24h' | 'ban' | 'unmute' | 'unban' | null;
+    }
+  ): Promise<AppModerationReport> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const now = Date.now();
+    await this.assertGroupCapability(userId, chatId, 'moderate_messages', 'Insufficient group permissions.');
+
+    const nextStatus = toModerationReportStatus(input.status);
+    const decisionNotes = input.decisionNotes?.trim().slice(0, 500) || null;
+    const moderationAction = input.moderationAction ?? null;
+    const current = await this.getModerationReportById(chatId, reportId);
+    if (!current) {
+      throw new Error('Report not found.');
+    }
+    if (moderationAction && !current.targetUserId) {
+      throw new Error('This report has no actionable target user.');
+    }
+
+    await pool.query<ResultSetHeader>(
+      `
+        UPDATE moderation_reports
+        SET
+          status = ?,
+          decision_notes = ?,
+          decided_by_user_id = ?,
+          decided_at = ?,
+          updated_at = ?
+        WHERE id = ?
+          AND chat_id = ?
+      `,
+      [nextStatus, decisionNotes, userId, now, now, reportId, chatId]
+    );
+
+    if (moderationAction && current.targetUserId) {
+      await this.manageGroupMember(userId, chatId, current.targetUserId, moderationAction, null, decisionNotes);
+    }
+
+    await this.appendGroupModerationLog(chatId, 'report_status_changed', userId, {
+      targetUserId: current.targetUserId,
+      messageId: current.messageId,
+      details: {
+        reportId,
+        previousStatus: current.status,
+        nextStatus,
+        decisionNotes,
+        moderationAction
+      }
+    });
+
+    const updated = await this.getModerationReportById(chatId, reportId);
+    if (!updated) {
+      throw new Error('Report could not be loaded.');
+    }
+    return updated;
+  }
+
   async joinGroupByInviteCode(userId: string, inviteCode: string): Promise<AppChatSummary> {
     await this.ensureReady();
     const pool = getMysqlPool();
@@ -3131,6 +3985,7 @@ export class SocialStore {
     if (!chatId) {
       throw new Error('Invite link is invalid.');
     }
+    await this.assertGroupUserNotBanned(chatId, userId);
 
     await pool.query<ResultSetHeader>(
       `
@@ -3190,6 +4045,8 @@ export class SocialStore {
           a.bio,
           a.email,
           a.global_role,
+          a.accent_color,
+          a.chat_background,
           a.avatar_updated_at,
           cm.joined_at,
           cm.member_role,
@@ -3210,16 +4067,21 @@ export class SocialStore {
         ORDER BY
           cm.member_role = 'owner' DESC,
           cm.member_role = 'admin' DESC,
+          cm.member_role = 'moderator' DESC,
           a.username ASC
       `,
       [now, now - CHAT_LIMITS.userOnlineTtlMs, chatId]
     );
 
+    const displayNames = await this.loadResolvedNicknamesForChat(chatId, memberRows.map((row) => row.user_id));
     const members: AppChatMember[] = memberRows.map((row) => ({
-      user: mapProfile(row, { includeEmail: row.user_id === userId }),
+      user: mapProfile(row, { includeEmail: row.user_id === userId, displayName: displayNames.get(row.user_id) }),
       joinedAt: asNumber(row.joined_at),
       role: row.member_role,
-      isOnline: asNumber(row.is_online) === 1
+      isOnline: asNumber(row.is_online) === 1,
+      mutedUntil: asNullableNumber(row.muted_until),
+      banActive: Boolean(asNullableNumber(row.banned_at)),
+      moderationNote: row.ban_reason?.trim() || row.mute_reason?.trim() || null
     }));
 
     const [messageRows] = await pool.query<MessageRow[]>(
@@ -3237,6 +4099,8 @@ export class SocialStore {
           a.bio,
           a.email,
           a.global_role,
+          a.accent_color,
+          a.chat_background,
           a.avatar_updated_at
         FROM (
           SELECT id, chat_id, user_id, text, created_at, attachments_json
@@ -3356,10 +4220,16 @@ export class SocialStore {
     if (chatType === 'global' && (shouldPingEveryone || shouldPingHere) && !canUseGlobalBroadcastMentions) {
       throw new Error('Only admins and superadmins can use @everyone or @here in global chat.');
     }
-    if (chatType === 'group' && shouldPingEveryone && !this.canUseMentionByPolicy(senderRole, everyonePolicy)) {
+    const groupPermissionContext: GroupPermissionContext = {
+      memberRole: senderRole,
+      globalRole: senderGlobalRole,
+      everyoneMentionPolicy: everyonePolicy,
+      hereMentionPolicy: herePolicy
+    };
+    if (chatType === 'group' && shouldPingEveryone && !hasGroupCapability(groupPermissionContext, 'use_everyone_mention')) {
       throw new Error('You are not allowed to use @everyone in this group.');
     }
-    if (chatType === 'group' && shouldPingHere && !this.canUseMentionByPolicy(senderRole, herePolicy)) {
+    if (chatType === 'group' && shouldPingHere && !hasGroupCapability(groupPermissionContext, 'use_here_mention')) {
       throw new Error('You are not allowed to use @here in this group.');
     }
 
@@ -3538,6 +4408,7 @@ export class SocialStore {
     if (!role) {
       throw new Error('Chat not accessible.');
     }
+    await this.assertGroupUserCanPost(chatId, userId);
 
     const account = await this.getAccountByUserId(userId);
     if (!account) {
@@ -3733,21 +4604,13 @@ export class SocialStore {
     if (actorUserId === authorUserId) {
       return true;
     }
-    const actor = await this.getAccountByUserId(actorUserId);
-    if (actor?.global_role === 'superadmin') {
-      return true;
-    }
-    const role = await this.getMembershipRole(actorUserId, chatId);
-    return role === 'owner';
+    const state = await this.getGroupPermissionState(actorUserId, chatId);
+    return Boolean(state && hasGroupCapability(state.context, 'delete_message_for_all'));
   }
 
   private async canPinMessage(actorUserId: string, chatId: string): Promise<boolean> {
-    const actor = await this.getAccountByUserId(actorUserId);
-    if (actor?.global_role === 'superadmin') {
-      return true;
-    }
-    const role = await this.getMembershipRole(actorUserId, chatId);
-    return role === 'owner' || role === 'admin';
+    const state = await this.getGroupPermissionState(actorUserId, chatId);
+    return Boolean(state && hasGroupCapability(state.context, 'pin_messages'));
   }
 
   private async appendGroupModerationLog(
@@ -3848,7 +4711,7 @@ export class SocialStore {
     if (scope === 'all') {
       const canDeleteForAll = await this.canDeleteMessageForAll(userId, chatId, row.user_id);
       if (!canDeleteForAll) {
-        throw new Error('No permission to delete for all.');
+        throw new PermissionDeniedError('No permission to delete for all.');
       }
 
       meta.deletedForAll = {
@@ -4006,7 +4869,7 @@ export class SocialStore {
 
     const canPin = await this.canPinMessage(userId, chatId);
     if (!canPin) {
-      throw new Error('No permission to pin messages.');
+      throw new PermissionDeniedError('No permission to pin messages.');
     }
 
     const row = await this.loadMessageRow(chatId, messageId);

@@ -2,7 +2,7 @@
 'use client';
 
 import Link from 'next/link';
-import { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { createPortal } from 'react-dom';
@@ -15,10 +15,15 @@ import type {
   AppChatReadReceipt,
   AppGroupSettings,
   AppModerationLog,
+  AppModerationReport,
+  AppModerationReportReason,
+  AppModerationReportStatus,
   AppUserProfile,
+  ChatBackgroundPreset,
   GlobalRole,
   GroupInviteMode,
   GroupInvitePolicy,
+  GroupMemberRole,
   GroupMentionPolicy
 } from '@/types/social';
 
@@ -260,16 +265,42 @@ function roleBadgeClass(role: GlobalRole): string {
   return 'role-badge role-badge-user';
 }
 
-function groupRoleLabel(role: 'owner' | 'admin' | 'member'): string {
-  if (role === 'owner') return 'Superadmin';
+function groupRoleLabel(role: 'owner' | 'admin' | 'moderator' | 'member'): string {
+  if (role === 'owner') return 'Owner';
   if (role === 'admin') return 'Admin';
+  if (role === 'moderator') return 'Moderator';
   return 'Nutzer';
+}
+
+function groupRoleRank(role: GroupMemberRole | null): number {
+  if (role === 'owner') return 40;
+  if (role === 'admin') return 30;
+  if (role === 'moderator') return 20;
+  if (role === 'member') return 10;
+  return 0;
+}
+
+function canManageRole(actorRole: GroupMemberRole | null, targetRole: GroupMemberRole): boolean {
+  return groupRoleRank(actorRole) > groupRoleRank(targetRole);
+}
+
+function canAssignRole(actorRole: GroupMemberRole | null, targetRole: GroupMemberRole, nextRole: GroupMemberRole): boolean {
+  if (!actorRole || nextRole === 'owner') {
+    return false;
+  }
+  if (!canManageRole(actorRole, targetRole)) {
+    return false;
+  }
+  if (actorRole !== 'owner' && (targetRole === 'admin' || nextRole === 'admin')) {
+    return false;
+  }
+  return groupRoleRank(actorRole) > groupRoleRank(nextRole);
 }
 
 function invitePolicyLabel(policy: GroupInvitePolicy): string {
   if (policy === 'everyone') return 'Jeder';
-  if (policy === 'owner') return 'Nur Superadmin';
-  return 'Admins + Superadmin';
+  if (policy === 'owner') return 'Nur Owner';
+  return 'Admins + Owner';
 }
 
 function moderationActionLabel(action: string): string {
@@ -277,7 +308,12 @@ function moderationActionLabel(action: string): string {
     member_invited: 'Mitglied eingeladen',
     member_promoted: 'Mitglied befördert',
     member_demoted: 'Mitglied herabgestuft',
+    member_role_changed: 'Rolle geändert',
     member_kicked: 'Mitglied entfernt',
+    member_muted: 'Mitglied stummgeschaltet',
+    member_unmuted: 'Mitglied entsperrt',
+    member_banned: 'Mitglied gebannt',
+    member_unbanned: 'Mitglied entbannt',
     ownership_transferred: 'Besitz übertragen',
     settings_updated: 'Gruppeneinstellungen geändert',
     invite_link_regenerated: 'Invite-Link neu generiert',
@@ -285,7 +321,9 @@ function moderationActionLabel(action: string): string {
     message_edited: 'Nachricht bearbeitet',
     message_deleted_for_all: 'Nachricht für alle gelöscht',
     message_pinned: 'Nachricht angepinnt',
-    message_unpinned: 'Nachricht entpinnt'
+    message_unpinned: 'Nachricht entpinnt',
+    report_created: 'Report erstellt',
+    report_status_changed: 'Reportstatus geändert'
   };
   return map[action] ?? action.replace(/_/g, ' ');
 }
@@ -301,14 +339,104 @@ function moderationDetailsLabel(details: Record<string, unknown> | null): string
   return entries.length > 0 ? entries.join(' · ') : null;
 }
 
+function moderationReportReasonLabel(reason: AppModerationReportReason): string {
+  const map: Record<AppModerationReportReason, string> = {
+    spam: 'Spam',
+    harassment: 'Belästigung',
+    hate: 'Hassrede',
+    violence: 'Gewalt',
+    sexual: 'Sexuelle Inhalte',
+    impersonation: 'Imitation',
+    privacy: 'Privatsphäre',
+    other: 'Sonstiges'
+  };
+  return map[reason];
+}
+
+function moderationReportStatusLabel(status: AppModerationReportStatus): string {
+  const map: Record<AppModerationReportStatus, string> = {
+    open: 'Offen',
+    reviewing: 'In Prüfung',
+    resolved: 'Gelöst',
+    dismissed: 'Abgewiesen'
+  };
+  return map[status];
+}
+
+function hexToRgba(hex: string | undefined, alpha: number): string {
+  const normalized = (hex ?? '').trim();
+  const match = /^#([0-9a-fA-F]{6})$/.exec(normalized);
+  if (!match) {
+    return `rgba(56, 189, 248, ${alpha})`;
+  }
+  const value = match[1];
+  const r = Number.parseInt(value.slice(0, 2), 16);
+  const g = Number.parseInt(value.slice(2, 4), 16);
+  const b = Number.parseInt(value.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function chatBackgroundStyle(preset?: ChatBackgroundPreset): CSSProperties {
+  if (preset === 'sunset') {
+    return { background: 'radial-gradient(circle at top, rgba(251,146,60,0.22), transparent 34%), linear-gradient(180deg, #2b1f2f 0%, #111827 100%)' };
+  }
+  if (preset === 'midnight') {
+    return { background: 'radial-gradient(circle at top right, rgba(56,189,248,0.16), transparent 26%), linear-gradient(180deg, #0f172a 0%, #020617 100%)' };
+  }
+  if (preset === 'forest') {
+    return { background: 'radial-gradient(circle at top, rgba(74,222,128,0.15), transparent 30%), linear-gradient(180deg, #102418 0%, #08130e 100%)' };
+  }
+  if (preset === 'paper') {
+    return { background: 'linear-gradient(180deg, #1f2937 0%, #111827 100%)' };
+  }
+  return { background: 'radial-gradient(circle at top, rgba(34,211,238,0.18), transparent 28%), linear-gradient(180deg, #162032 0%, #0f172a 100%)' };
+}
+
+function profileAccentStyle(user: AppUserProfile | null | undefined): CSSProperties | undefined {
+  if (!user?.accentColor) {
+    return undefined;
+  }
+  return {
+    color: user.accentColor,
+    borderColor: hexToRgba(user.accentColor, 0.34),
+    background: hexToRgba(user.accentColor, 0.14)
+  };
+}
+
+function profileHeroStyle(user: AppUserProfile | null | undefined): CSSProperties {
+  const accent = user?.accentColor ?? '#38bdf8';
+  return {
+    ...chatBackgroundStyle(user?.chatBackground),
+    borderColor: hexToRgba(accent, 0.34),
+    boxShadow: `0 18px 42px ${hexToRgba(accent, 0.14)}`,
+    position: 'relative',
+    overflow: 'hidden'
+  };
+}
+
+function themeLabel(preset?: ChatBackgroundPreset): string {
+  if (preset === 'sunset') return 'Sunset';
+  if (preset === 'midnight') return 'Midnight';
+  if (preset === 'forest') return 'Forest';
+  if (preset === 'paper') return 'Paper';
+  return 'Aurora';
+}
+
 function Avatar({ user, size = 34, sessionToken }: { user: AppUserProfile; size?: number; sessionToken?: string }) {
   const [failed, setFailed] = useState(false);
+  const accent = user.accentColor ?? '#38bdf8';
 
   if (!user.avatarUpdatedAt || failed) {
     return (
       <div
-        className="flex items-center justify-center rounded-full border border-cyan-300/35 bg-cyan-500/20 text-xs font-semibold text-cyan-100"
-        style={{ width: size, height: size }}
+        className="flex items-center justify-center rounded-full text-xs font-semibold text-cyan-100"
+        style={{
+          width: size,
+          height: size,
+          border: `1px solid ${hexToRgba(accent, 0.45)}`,
+          background: `linear-gradient(145deg, ${hexToRgba(accent, 0.28)}, ${hexToRgba(accent, 0.14)})`,
+          boxShadow: `0 0 0 1px ${hexToRgba(accent, 0.12)} inset`
+        }}
       >
         {initials(user)}
       </div>
@@ -321,7 +449,11 @@ function Avatar({ user, size = 34, sessionToken }: { user: AppUserProfile; size?
       alt={user.username}
       width={size}
       height={size}
-      className="rounded-full border border-cyan-300/35 object-cover"
+      className="rounded-full object-cover"
+      style={{
+        border: `1px solid ${hexToRgba(accent, 0.42)}`,
+        boxShadow: `0 0 0 1px ${hexToRgba(accent, 0.12)} inset`
+      }}
       onError={() => setFailed(true)}
     />
   );
@@ -392,6 +524,10 @@ type MessageMenuPosition = {
 };
 
 type GroupOverviewTab = 'overview' | 'finder' | 'admin';
+
+type ReportTarget =
+  | { kind: 'message'; messageId: string; targetUserId: string | null; label: string }
+  | { kind: 'user'; messageId: null; targetUserId: string; label: string };
 
 type PendingSendPayload = {
   clientId: string;
@@ -468,6 +604,9 @@ export default function ChatPage() {
   const [messageSenderFilter, setMessageSenderFilter] = useState('all');
   const [showPinnedOnly, setShowPinnedOnly] = useState(false);
   const [moderationLogs, setModerationLogs] = useState<AppModerationLog[]>([]);
+  const [moderationReports, setModerationReports] = useState<AppModerationReport[]>([]);
+  const [reportStatusFilter, setReportStatusFilter] = useState<AppModerationReportStatus | 'all'>('all');
+  const [reportDecisionNotes, setReportDecisionNotes] = useState<Record<string, string>>({});
   const [groupInviteModeDraft, setGroupInviteModeDraft] = useState<GroupInviteMode>('direct');
   const [groupInvitePolicyDraft, setGroupInvitePolicyDraft] = useState<GroupInvitePolicy>('admins');
   const [groupEveryoneMentionPolicyDraft, setGroupEveryoneMentionPolicyDraft] = useState<GroupMentionPolicy>('admins');
@@ -502,6 +641,9 @@ export default function ChatPage() {
   const [replyTarget, setReplyTarget] = useState<AppChatMessage | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AppChatMessage | null>(null);
+  const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
+  const [reportReason, setReportReason] = useState<AppModerationReportReason>('spam');
+  const [reportNotes, setReportNotes] = useState('');
   const [profileCard, setProfileCard] = useState<AppUserProfile | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [connectionState, setConnectionState] = useState<'online' | 'reconnecting' | 'offline'>('online');
@@ -535,6 +677,7 @@ export default function ChatPage() {
   const pollModalRef = useRef<HTMLDivElement | null>(null);
   const shortcutModalRef = useRef<HTMLDivElement | null>(null);
   const deleteModalRef = useRef<HTMLDivElement | null>(null);
+  const reportModalRef = useRef<HTMLDivElement | null>(null);
   const profileModalRef = useRef<HTMLDivElement | null>(null);
 
   const activeChatId = bootstrap?.activeChatId ?? null;
@@ -696,6 +839,13 @@ export default function ChatPage() {
         item.attachment.fileName.toLowerCase().includes(normalizedFinderQuery) || item.author.toLowerCase().includes(normalizedFinderQuery)
     );
   }, [groupFiles, normalizedFinderQuery]);
+
+  useEffect(() => {
+    if (!showGroupManageModal || !groupSettings?.canViewModerationLogs) {
+      return;
+    }
+    void loadModerationReports(reportStatusFilter);
+  }, [groupSettings?.canViewModerationLogs, reportStatusFilter, showGroupManageModal]);
   const normalizedMessageSearchQuery = messageSearchQuery.trim().toLowerCase();
   const pinnedMessages = useMemo(
     () => messages.filter((message) => message.isPinned).sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0)),
@@ -1517,11 +1667,21 @@ export default function ChatPage() {
       const matchedUser = byUsername.get(normalized) ?? byFullName.get(normalizedCompact);
 
       if (matchedUser) {
+        const mentionStyle: CSSProperties = {
+          color: matchedUser.accentColor ?? '#fde68a',
+          background: hexToRgba(matchedUser.accentColor, 0.18),
+          borderColor: hexToRgba(matchedUser.accentColor, 0.42)
+        };
+        const mentionHoverStyle: CSSProperties = {
+          background: `linear-gradient(135deg, ${hexToRgba(matchedUser.accentColor, 0.28)}, ${hexToRgba(matchedUser.accentColor, 0.16)})`,
+          boxShadow: `0 10px 24px ${hexToRgba(matchedUser.accentColor, 0.12)}`
+        };
         fragments.push(
           <button
             key={`mention-${token.start}-${index}`}
             type="button"
             className="mention-inline mention-inline-clickable"
+            style={{ ...mentionStyle, ...mentionHoverStyle }}
             title={`${matchedUser.fullName} (@${matchedUser.username}) • ${roleLabel(matchedUser.role)}`}
             onClick={(event) => {
               event.stopPropagation();
@@ -1529,12 +1689,33 @@ export default function ChatPage() {
             }}
           >
             {token.value}
-            <span className="mention-tooltip" role="tooltip">
+            <span
+              className="mention-tooltip"
+              role="tooltip"
+              style={{
+                borderColor: hexToRgba(matchedUser.accentColor, 0.34),
+                boxShadow: `0 14px 34px ${hexToRgba(matchedUser.accentColor, 0.14)}`,
+                background: `linear-gradient(180deg, ${hexToRgba(matchedUser.accentColor, 0.16)}, rgba(17, 24, 33, 0.96))`
+              }}
+            >
               <span className="mention-tooltip-head">
-                <span className="mention-tooltip-avatar">{initials(matchedUser)}</span>
+                <span
+                  className="mention-tooltip-avatar"
+                  style={{
+                    borderColor: hexToRgba(matchedUser.accentColor, 0.42),
+                    background: `linear-gradient(145deg, ${hexToRgba(matchedUser.accentColor, 0.28)}, ${hexToRgba(matchedUser.accentColor, 0.12)})`,
+                    color: matchedUser.accentColor ?? '#dbeafe'
+                  }}
+                >
+                  {initials(matchedUser)}
+                </span>
                 <span className="mention-tooltip-name-wrap">
-                  <span className="mention-tooltip-name">{matchedUser.fullName}</span>
-                  <span className={`mention-tooltip-role ${roleBadgeClass(matchedUser.role)}`}>{roleLabel(matchedUser.role)}</span>
+                  <span className="mention-tooltip-name" style={{ color: matchedUser.accentColor ?? '#f8fafc' }}>
+                    {matchedUser.fullName}
+                  </span>
+                  <span className={`mention-tooltip-role ${roleBadgeClass(matchedUser.role)}`} style={profileAccentStyle(matchedUser)}>
+                    {roleLabel(matchedUser.role)}
+                  </span>
                 </span>
               </span>
               <span className="mention-tooltip-meta">@{matchedUser.username}</span>
@@ -1729,7 +1910,7 @@ export default function ChatPage() {
     if (me.role === 'superadmin') {
       return true;
     }
-    return context?.chat.kind === 'group' && context.chat.memberRole === 'owner';
+    return context?.chat.kind === 'group' && Boolean(groupSettings?.canModerateMessages);
   };
 
   const canPinMessage = (): boolean => {
@@ -1742,7 +1923,7 @@ export default function ChatPage() {
     if (context?.chat.kind !== 'group') {
       return false;
     }
-    return context.chat.memberRole === 'owner' || context.chat.memberRole === 'admin';
+    return Boolean(groupSettings?.canModerateMessages);
   };
 
   const togglePinMessage = async (messageId: string) => {
@@ -2074,16 +2255,25 @@ export default function ChatPage() {
     }
   };
 
-  const manageMember = async (targetUserId: string, action: 'invite' | 'promote' | 'demote' | 'kick' | 'transfer_ownership') => {
+  const manageMember = async (
+    targetUserId: string,
+    action: 'invite' | 'promote' | 'demote' | 'kick' | 'transfer_ownership' | 'set_role' | 'mute_1h' | 'mute_24h' | 'unmute' | 'ban' | 'unban',
+    nextRole?: GroupMemberRole,
+    moderationReason?: string
+  ) => {
     if (!token || !activeChatId) return;
 
     try {
       await api('/api/app/chats/member', token, {
         method: 'POST',
-        body: JSON.stringify({ chatId: activeChatId, targetUserId, action })
+        body: JSON.stringify({ chatId: activeChatId, targetUserId, action, nextRole: nextRole ?? null, moderationReason: moderationReason ?? null })
       });
       await loadContext(token, activeChatId);
       await loadBootstrap(token, activeChatId);
+      if (showGroupManageModal && groupSettings?.canViewModerationLogs) {
+        await loadModerationLogs();
+        await loadModerationReports();
+      }
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Mitgliederaktion fehlgeschlagen.');
     }
@@ -2103,7 +2293,13 @@ export default function ChatPage() {
     setFinderQuery('');
     setGroupOverviewTab('overview');
     setShowGroupManageModal(true);
-    void loadModerationLogs();
+    if (groupSettings.canViewModerationLogs) {
+      void loadModerationLogs();
+      void loadModerationReports(reportStatusFilter);
+    } else {
+      setModerationLogs([]);
+      setModerationReports([]);
+    }
   };
 
   const loadModerationLogs = async () => {
@@ -2117,6 +2313,132 @@ export default function ChatPage() {
       setModerationLogs(payload.logs);
     } catch {
       setModerationLogs([]);
+    }
+  };
+
+  const loadModerationReports = async (status: AppModerationReportStatus | 'all' = reportStatusFilter) => {
+    if (!token || !activeChatId || !groupSettings?.canViewModerationLogs) {
+      setModerationReports([]);
+      return;
+    }
+    try {
+      const payload = (await api(
+        `/api/app/chats/reports?chatId=${encodeURIComponent(activeChatId)}&status=${encodeURIComponent(status)}&limit=120`,
+        token
+      )) as { reports: AppModerationReport[] };
+      setModerationReports(payload.reports);
+    } catch {
+      setModerationReports([]);
+    }
+  };
+
+  const openMessageReportModal = (message: AppChatMessage) => {
+    setActionMenuMessageId(null);
+    setReportReason('spam');
+    setReportNotes('');
+    setReportTarget({
+      kind: 'message',
+      messageId: message.id,
+      targetUserId: message.user.id,
+      label: `Nachricht von ${message.user.fullName}`
+    });
+  };
+
+  const openUserReportModal = (userId: string, fullName: string) => {
+    setReportReason('harassment');
+    setReportNotes('');
+    setReportTarget({
+      kind: 'user',
+      messageId: null,
+      targetUserId: userId,
+      label: `Profil von ${fullName}`
+    });
+  };
+
+  const submitModerationReport = async () => {
+    if (!token || !activeChatId || !reportTarget) {
+      return;
+    }
+    setIsBusy(true);
+    setError(null);
+    setInfo(null);
+
+    try {
+      await api('/api/app/chats/report', token, {
+        method: 'POST',
+        body: JSON.stringify({
+          chatId: activeChatId,
+          messageId: reportTarget.messageId,
+          targetUserId: reportTarget.targetUserId,
+          reason: reportReason,
+          notes: reportNotes.trim() || null
+        })
+      });
+      setReportTarget(null);
+      setReportNotes('');
+      setInfo('Report wurde eingereicht.');
+      if (groupSettings?.canViewModerationLogs) {
+        await loadModerationReports();
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Report konnte nicht erstellt werden.');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const updateModerationReportStatus = async (reportId: string, status: AppModerationReportStatus) => {
+    if (!token || !activeChatId) {
+      return;
+    }
+    setIsBusy(true);
+    setError(null);
+    try {
+      await api('/api/app/chats/reports/decision', token, {
+        method: 'POST',
+        body: JSON.stringify({
+          chatId: activeChatId,
+          reportId,
+          status,
+          decisionNotes: reportDecisionNotes[reportId] ?? null
+        })
+      });
+      await loadModerationReports();
+      await loadModerationLogs();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Report konnte nicht aktualisiert werden.');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const resolveReportWithAction = async (
+    reportId: string,
+    moderationAction: 'mute_1h' | 'mute_24h' | 'ban' | 'unmute' | 'unban'
+  ) => {
+    if (!token || !activeChatId) {
+      return;
+    }
+    setIsBusy(true);
+    setError(null);
+    try {
+      await api('/api/app/chats/reports/decision', token, {
+        method: 'POST',
+        body: JSON.stringify({
+          chatId: activeChatId,
+          reportId,
+          status: moderationAction === 'unmute' || moderationAction === 'unban' ? 'reviewing' : 'resolved',
+          decisionNotes: reportDecisionNotes[reportId] ?? null,
+          moderationAction
+        })
+      });
+      await loadModerationReports();
+      await loadModerationLogs();
+      await loadContext(token, activeChatId);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Report konnte nicht bearbeitet werden.');
+    } finally {
+      setIsBusy(false);
     }
   };
 
@@ -2403,6 +2725,7 @@ export default function ChatPage() {
     <>
       <motion.main
         className="discord-shell chat-page-shell"
+        style={chatBackgroundStyle(me?.chatBackground)}
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
@@ -2648,7 +2971,10 @@ export default function ChatPage() {
                       <header className="mb-1 flex items-center justify-between gap-2">
                         <button className="flex min-w-0 items-center gap-2" onClick={() => void openProfile(message.user.id)}>
                           {!isMe ? <Avatar user={message.user} size={20} sessionToken={token} /> : null}
-                          <span className={`truncate text-xs font-semibold ${isMe ? 'text-indigo-50' : 'text-slate-100'}`}>
+                          <span
+                            className={`truncate text-xs font-semibold ${isMe ? 'text-indigo-50' : 'text-slate-100'}`}
+                            style={!isMe ? { color: message.user.accentColor ?? '#e2e8f0' } : undefined}
+                          >
                             {isMe ? 'Du' : message.user.fullName}
                           </span>
                         </button>
@@ -2711,10 +3037,15 @@ export default function ChatPage() {
                                         Bearbeiten
                                       </button>
                                     ) : null}
+                                    {!isMe ? (
+                                      <button className="message-menu-item" onClick={() => openMessageReportModal(message)}>
+                                        Melden
+                                      </button>
+                                    ) : null}
                                     <button className="message-menu-item danger" onClick={() => openDeleteModal(message)}>
                                       Löschen
                                     </button>
-                                    {!allowDeleteForAll ? <p className="message-menu-hint">Für alle nur als Gruppen-Owner oder globaler Superadmin.</p> : null}
+                                    {!allowDeleteForAll ? <p className="message-menu-hint">Für alle nur als Autor, Moderator, Admin, Owner oder globaler Superadmin.</p> : null}
                                   </div>,
                                   document.body
                                 )
@@ -2724,8 +3055,18 @@ export default function ChatPage() {
                       </header>
 
                       {message.replyTo ? (
-                        <div className={`reply-chip ${isMe ? 'me' : 'other'}`}>
-                          <p className="reply-author">{message.replyTo.authorName}</p>
+                        <div
+                          className={`reply-chip ${isMe ? 'me' : 'other'}`}
+                          style={{
+                            borderLeftColor: message.user.accentColor ? hexToRgba(message.user.accentColor, 0.72) : undefined,
+                            background: message.user.accentColor
+                              ? `linear-gradient(90deg, ${hexToRgba(message.user.accentColor, 0.12)}, rgba(15, 23, 42, 0))`
+                              : undefined
+                          }}
+                        >
+                          <p className="reply-author" style={{ color: message.user.accentColor ?? undefined }}>
+                            {message.replyTo.authorName}
+                          </p>
                           <p className="reply-text">{message.replyTo.textSnippet}</p>
                         </div>
                       ) : null}
@@ -3050,10 +3391,14 @@ export default function ChatPage() {
                     <button className="flex min-w-0 items-center gap-2" onClick={() => void openProfile(member.user.id)}>
                       <span className={`h-2 w-2 rounded-full ${member.isOnline ? 'bg-emerald-400' : 'bg-slate-500'}`} />
                       <Avatar user={member.user} size={22} sessionToken={token} />
-                      <span className="truncate">{member.user.fullName}</span>
+                      <span className="truncate" style={{ color: member.user.accentColor ?? '#e2e8f0' }}>
+                        {member.user.fullName}
+                        {member.banActive ? ' · gebannt' : member.mutedUntil && member.mutedUntil > Date.now() ? ' · muted' : ''}
+                      </span>
                     </button>
                     <span className="surface-muted text-[11px] uppercase">{groupRoleLabel(member.role)}</span>
                   </div>
+                  {member.moderationNote ? <p className="surface-muted mt-1 text-[11px] truncate">{member.moderationNote}</p> : null}
                 </motion.li>
               ))}
             </ul>
@@ -3117,7 +3462,7 @@ export default function ChatPage() {
               >
                 Links- und Medienfinder
               </button>
-              {(groupSettings.canManageUsers || groupSettings.canManageSettings || groupSettings.canTransferOwnership || groupSettings.canCloseGroup) ? (
+              {(groupSettings.canManageUsers || groupSettings.canManageSettings || groupSettings.canModerateMessages || groupSettings.canViewModerationLogs || groupSettings.canTransferOwnership || groupSettings.canCloseGroup) ? (
                 <button
                   className={`btn-soft px-2 py-1 text-xs ${groupOverviewTab === 'admin' ? 'border-indigo-400/70 text-indigo-100' : ''}`}
                   type="button"
@@ -3224,6 +3569,7 @@ export default function ChatPage() {
 
             {groupOverviewTab === 'admin' ? (
             <>
+            {groupSettings.canModerateMessages ? (
             <section className="mt-4">
               <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Angepinnte Nachrichten</h3>
               <ul className="mt-2 max-h-44 space-y-1.5 overflow-y-auto">
@@ -3238,7 +3584,9 @@ export default function ChatPage() {
                 {pinnedMessages.length === 0 ? <li className="surface-muted text-xs">Keine angepinnten Nachrichten.</li> : null}
               </ul>
             </section>
+            ) : null}
 
+            {groupSettings.canViewModerationLogs ? (
             <section className="mt-4">
               <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Moderationsprotokoll</h3>
               <ul className="mt-2 max-h-44 space-y-1.5 overflow-y-auto">
@@ -3267,18 +3615,121 @@ export default function ChatPage() {
                 {moderationLogs.length === 0 ? <li className="surface-muted text-xs">Noch keine Moderationsereignisse.</li> : null}
               </ul>
             </section>
+            ) : null}
 
+            {groupSettings.canViewModerationLogs ? (
+            <section className="mt-4">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Reports</h3>
+                <select
+                  className="glass-input text-xs"
+                  value={reportStatusFilter}
+                  onChange={(event) => setReportStatusFilter(event.target.value as AppModerationReportStatus | 'all')}
+                >
+                  <option value="all">Alle</option>
+                  <option value="open">Offen</option>
+                  <option value="reviewing">In Prüfung</option>
+                  <option value="resolved">Gelöst</option>
+                  <option value="dismissed">Abgewiesen</option>
+                </select>
+              </div>
+              <ul className="mt-2 max-h-56 space-y-1.5 overflow-y-auto">
+                {moderationReports.map((report) => {
+                  const reportMessageId = report.messageId;
+                  return (
+                  <li key={report.id} className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-xs text-slate-100">
+                          {moderationReportReasonLabel(report.reason)} · {moderationReportStatusLabel(report.status)}
+                        </p>
+                        <p className="surface-muted mt-1 text-[11px]">
+                          von {report.reporterName}
+                          {report.targetName ? ` · gegen ${report.targetName}` : ''}
+                        </p>
+                      </div>
+                      {reportMessageId ? (
+                        <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => jumpToMessageFromModeration(reportMessageId)}>
+                          Öffnen
+                        </button>
+                      ) : null}
+                    </div>
+                    {report.messagePreview ? <p className="mt-2 text-xs text-slate-200">{report.messagePreview}</p> : null}
+                    {report.notes ? <p className="surface-muted mt-1 text-[11px]">Meldung: {report.notes}</p> : null}
+                    {report.decisionNotes ? <p className="surface-muted mt-1 text-[11px]">Entscheidung: {report.decisionNotes}</p> : null}
+                    <p className="surface-muted mt-1 text-[11px]">{new Date(report.createdAt).toLocaleString()}</p>
+                    {groupSettings.canModerateMessages ? (
+                      <textarea
+                        className="glass-input mt-2 min-h-[72px] text-xs"
+                        placeholder="Interne Entscheidungsnotiz oder Maßnahmegrund..."
+                        value={reportDecisionNotes[report.id] ?? ''}
+                        onChange={(event) => setReportDecisionNotes((prev) => ({ ...prev, [report.id]: event.target.value }))}
+                        maxLength={500}
+                      />
+                    ) : null}
+                    {groupSettings.canModerateMessages ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {report.targetUserId ? (
+                          <>
+                            <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void resolveReportWithAction(report.id, 'mute_1h')}>
+                              Lösen + 1h Mute
+                            </button>
+                            <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void resolveReportWithAction(report.id, 'mute_24h')}>
+                              Lösen + 24h Mute
+                            </button>
+                            <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void resolveReportWithAction(report.id, 'ban')}>
+                              Lösen + Bann
+                            </button>
+                            <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void resolveReportWithAction(report.id, 'unmute')}>
+                              Unmute
+                            </button>
+                            <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void resolveReportWithAction(report.id, 'unban')}>
+                              Unban
+                            </button>
+                          </>
+                        ) : null}
+                        {report.status !== 'reviewing' ? (
+                          <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void updateModerationReportStatus(report.id, 'reviewing')}>
+                            In Prüfung
+                          </button>
+                        ) : null}
+                        {report.status !== 'resolved' ? (
+                          <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void updateModerationReportStatus(report.id, 'resolved')}>
+                            Lösen
+                          </button>
+                        ) : null}
+                        {report.status !== 'dismissed' ? (
+                          <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void updateModerationReportStatus(report.id, 'dismissed')}>
+                            Abweisen
+                          </button>
+                        ) : null}
+                        {report.status !== 'open' ? (
+                          <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void updateModerationReportStatus(report.id, 'open')}>
+                            Wieder öffnen
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </li>
+                  );
+                })}
+                {moderationReports.length === 0 ? <li className="surface-muted text-xs">Keine Reports gefunden.</li> : null}
+              </ul>
+            </section>
+            ) : null}
+
+            {groupSettings.canManageUsers ? (
             <section className="mt-4">
               <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">User verwalten</h3>
               <ul className="mt-2 max-h-56 space-y-1.5 overflow-y-auto">
                 {members.map((member) => {
-                  const canPromote = groupSettings.canManageUsers && context.chat.memberRole === 'owner' && member.role === 'member';
-                  const canDemote = groupSettings.canManageUsers && context.chat.memberRole === 'owner' && member.role === 'admin';
-                  const canKick =
-                    groupSettings.canManageUsers &&
-                    member.user.id !== me.id &&
-                    member.role !== 'owner' &&
-                    (context.chat.memberRole === 'owner' || member.role === 'member');
+                  const viewerRole = context.chat.memberRole;
+                  const canPromoteToModerator = member.user.id !== me.id && canAssignRole(viewerRole, member.role, 'moderator');
+                  const canPromoteToAdmin = member.user.id !== me.id && canAssignRole(viewerRole, member.role, 'admin');
+                  const canDemoteToMember = member.user.id !== me.id && canAssignRole(viewerRole, member.role, 'member');
+                  const canKick = member.user.id !== me.id && canManageRole(viewerRole, member.role);
+                  const canModerateMember = groupSettings.canModerateMessages && member.user.id !== me.id && canManageRole(viewerRole, member.role);
+                  const hasActiveMute = Boolean(member.mutedUntil && member.mutedUntil > Date.now());
 
                   return (
                     <li key={member.user.id} className="glass-card rounded-lg p-2 text-sm">
@@ -3286,16 +3737,47 @@ export default function ChatPage() {
                         <span className="truncate">
                           <span className={`mr-1 inline-block h-2 w-2 rounded-full ${member.isOnline ? 'bg-emerald-400' : 'bg-slate-500'}`} />
                           {member.user.fullName} ({groupRoleLabel(member.role)})
+                          {member.banActive ? ' · gebannt' : hasActiveMute ? ` · muted bis ${new Date(member.mutedUntil!).toLocaleString()}` : ''}
                         </span>
                         <div className="flex gap-1">
-                          {canPromote ? (
-                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'promote')}>
+                          {canPromoteToModerator ? (
+                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'set_role', 'moderator')}>
+                              zu Moderator
+                            </button>
+                          ) : null}
+                          {canPromoteToAdmin ? (
+                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'set_role', 'admin')}>
                               zu Admin
                             </button>
                           ) : null}
-                          {canDemote ? (
-                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'demote')}>
+                          {canDemoteToMember ? (
+                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'set_role', 'member')}>
                               zu User
+                            </button>
+                          ) : null}
+                          {member.user.id !== me.id ? (
+                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => openUserReportModal(member.user.id, member.user.fullName)}>
+                              Melden
+                            </button>
+                          ) : null}
+                          {canModerateMember ? (
+                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'mute_1h', undefined, 'moderation_panel_1h')}>
+                              1h Mute
+                            </button>
+                          ) : null}
+                          {canModerateMember ? (
+                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'ban', undefined, 'moderation_panel_ban')}>
+                              Bannen
+                            </button>
+                          ) : null}
+                          {canModerateMember && hasActiveMute ? (
+                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'unmute', undefined, 'moderation_panel_unmute')}>
+                              Unmute
+                            </button>
+                          ) : null}
+                          {groupSettings.canModerateMessages && member.banActive ? (
+                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'unban', undefined, 'moderation_panel_unban')}>
+                              Unban
                             </button>
                           ) : null}
                           {canKick ? (
@@ -3305,6 +3787,7 @@ export default function ChatPage() {
                           ) : null}
                         </div>
                       </div>
+                      {member.moderationNote ? <p className="surface-muted mt-1 text-[11px]">{member.moderationNote}</p> : null}
                     </li>
                   );
                 })}
@@ -3336,6 +3819,7 @@ export default function ChatPage() {
                 </select>
               </div>
             </section>
+            ) : null}
 
             {groupSettings.canManageSettings ? (
               <section className="mt-4">
@@ -3353,8 +3837,8 @@ export default function ChatPage() {
                     <span className="surface-muted text-xs uppercase tracking-wide">Wer darf direkt hinzufuegen?</span>
                     <select className="glass-input text-sm" value={groupInvitePolicyDraft} onChange={(event) => setGroupInvitePolicyDraft(event.target.value as GroupInvitePolicy)}>
                       <option value="everyone">Jeder in der Gruppe</option>
-                      <option value="admins">Admins + Superadmin</option>
-                      <option value="owner">Nur Superadmin</option>
+                      <option value="admins">Admins + Owner</option>
+                      <option value="owner">Nur Owner</option>
                     </select>
                   </label>
 
@@ -3366,8 +3850,8 @@ export default function ChatPage() {
                       onChange={(event) => setGroupEveryoneMentionPolicyDraft(event.target.value as GroupMentionPolicy)}
                     >
                       <option value="everyone">Jeder in der Gruppe</option>
-                      <option value="admins">Admins + Superadmin</option>
-                      <option value="owner">Nur Superadmin</option>
+                      <option value="admins">Admins + Owner</option>
+                      <option value="owner">Nur Owner</option>
                     </select>
                   </label>
 
@@ -3379,8 +3863,8 @@ export default function ChatPage() {
                       onChange={(event) => setGroupHereMentionPolicyDraft(event.target.value as GroupMentionPolicy)}
                     >
                       <option value="everyone">Jeder in der Gruppe</option>
-                      <option value="admins">Admins + Superadmin</option>
-                      <option value="owner">Nur Superadmin</option>
+                      <option value="admins">Admins + Owner</option>
+                      <option value="owner">Nur Owner</option>
                     </select>
                   </label>
 
@@ -3400,7 +3884,7 @@ export default function ChatPage() {
                       value={groupMessageCooldownMsDraft}
                       onChange={(event) => setGroupMessageCooldownMsDraft(Number.parseInt(event.target.value || '0', 10) || 0)}
                     />
-                    <p className="surface-muted text-xs">Standard ist 1000ms. Gilt nur für normale Mitglieder, nicht für globale Admins/Superadmins oder Gruppen-Admins.</p>
+                    <p className="surface-muted text-xs">Standard ist 1000ms. Gilt nur für normale Mitglieder, nicht für globale Admins/Superadmins oder Gruppen-Moderatoren/Admins/Owner.</p>
                   </label>
 
                   <button className="btn-primary text-sm" type="button" onClick={() => void saveGroupSettings()} disabled={isBusy}>
@@ -3438,7 +3922,7 @@ export default function ChatPage() {
                 <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Besitz übertragen</h3>
                 <div className="mt-2 flex items-center gap-2">
                   <select className="glass-input text-sm" value={ownershipTargetUserId} onChange={(event) => setOwnershipTargetUserId(event.target.value)}>
-                    <option value="">Neuen Superadmin auswählen...</option>
+                    <option value="">Neuen Owner auswählen...</option>
                     {members
                       .filter((member) => member.user.id !== me.id)
                       .map((member) => (
@@ -3708,20 +4192,131 @@ export default function ChatPage() {
         </motion.div>
       ) : null}
 
+      {reportTarget ? (
+        <motion.div className="modal-overlay" onClick={() => setReportTarget(null)} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+          <motion.div
+            ref={reportModalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="report-dialog-title"
+            tabIndex={-1}
+            className="modal-card"
+            onClick={(event) => event.stopPropagation()}
+            initial={{ opacity: 0, y: 16, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+          >
+            <h2 id="report-dialog-title" className="text-lg font-semibold text-slate-100">Inhalt melden</h2>
+            <p className="surface-muted mt-1 text-sm">{reportTarget.label}</p>
+
+            <label className="mt-4 block space-y-1">
+              <span className="surface-muted text-xs uppercase tracking-wide">Grund</span>
+              <select className="glass-input text-sm" value={reportReason} onChange={(event) => setReportReason(event.target.value as AppModerationReportReason)}>
+                <option value="spam">Spam</option>
+                <option value="harassment">Belästigung</option>
+                <option value="hate">Hassrede</option>
+                <option value="violence">Gewalt</option>
+                <option value="sexual">Sexuelle Inhalte</option>
+                <option value="impersonation">Imitation</option>
+                <option value="privacy">Privatsphäre</option>
+                <option value="other">Sonstiges</option>
+              </select>
+            </label>
+
+            <label className="mt-3 block space-y-1">
+              <span className="surface-muted text-xs uppercase tracking-wide">Notiz</span>
+              <textarea
+                className="glass-input min-h-[110px] text-sm"
+                value={reportNotes}
+                onChange={(event) => setReportNotes(event.target.value)}
+                maxLength={500}
+                placeholder="Optionaler Kontext für Moderatoren..."
+              />
+            </label>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button className="btn-primary" onClick={() => void submitModerationReport()} disabled={isBusy}>
+                {isBusy ? 'Sende...' : 'Report senden'}
+              </button>
+              <button className="btn-soft" onClick={() => setReportTarget(null)}>
+                Abbrechen
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      ) : null}
+
       {profileCard ? (
         <motion.div className="modal-overlay" onClick={() => setProfileCard(null)} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
           <motion.div ref={profileModalRef} role="dialog" aria-modal="true" aria-labelledby="profile-dialog-title" tabIndex={-1} className="modal-card" onClick={(event) => event.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}>
-            <div className="flex items-center gap-3">
-              <Avatar user={profileCard} size={56} sessionToken={token} />
-              <div>
-                <h2 id="profile-dialog-title" className="text-lg font-semibold text-slate-100">{profileCard.fullName}</h2>
-                <p className="surface-muted text-sm">@{profileCard.username}</p>
-                <span className={`mt-1 inline-flex ${roleBadgeClass(profileCard.role)}`}>{roleLabel(profileCard.role)}</span>
+            <div className="rounded-[1.35rem] border p-4" style={profileHeroStyle(profileCard)}>
+              <div
+                className="pointer-events-none absolute inset-x-6 top-0 h-20 rounded-b-[999px] blur-2xl"
+                style={{ background: `radial-gradient(circle, ${hexToRgba(profileCard.accentColor, 0.4)} 0%, transparent 72%)` }}
+              />
+              <div className="relative flex items-start gap-3">
+                <Avatar user={profileCard} size={64} sessionToken={token} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 id="profile-dialog-title" className="truncate text-xl font-semibold text-slate-100" style={{ color: profileCard.accentColor ?? '#f8fafc' }}>
+                      {profileCard.fullName}
+                    </h2>
+                    <span className={`inline-flex ${roleBadgeClass(profileCard.role)}`} style={profileAccentStyle(profileCard)}>
+                      {roleLabel(profileCard.role)}
+                    </span>
+                  </div>
+                  <p className="surface-muted text-sm">@{profileCard.username}</p>
+                  <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+                    <span
+                      className="rounded-full border px-2 py-1 font-semibold uppercase tracking-wide text-slate-100"
+                      style={{
+                        borderColor: hexToRgba(profileCard.accentColor, 0.34),
+                        background: hexToRgba(profileCard.accentColor, 0.14)
+                      }}
+                    >
+                      Theme {themeLabel(profileCard.chatBackground)}
+                    </span>
+                    {profileCard.legalName ? (
+                      <span className="rounded-full border border-slate-700/70 bg-slate-950/45 px-2 py-1 text-slate-200">
+                        Legal {profileCard.legalName}
+                      </span>
+                    ) : null}
+                    {profileCard.nicknameSlots?.filter((slot) => slot.nickname.trim()).slice(0, 3).map((slot) => (
+                      <span
+                        key={slot.id}
+                        className="rounded-full border px-2 py-1 text-slate-100"
+                        style={{
+                          borderColor: hexToRgba(profileCard.accentColor, slot.scope === 'global' ? 0.34 : 0.22),
+                          background: slot.scope === 'global' ? hexToRgba(profileCard.accentColor, 0.14) : 'rgba(15, 23, 42, 0.55)'
+                        }}
+                      >
+                        {slot.scope === 'global' ? 'Global' : slot.chatName ?? 'Chat'}: {slot.nickname}
+                      </span>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
 
-            <p className="mt-4 whitespace-pre-wrap text-sm text-slate-100">{profileCard.bio || 'Keine Bio gesetzt.'}</p>
-            {profileCard.email ? <p className="surface-muted mt-2 text-xs">E-Mail: {profileCard.email}</p> : null}
+            <div className="mt-4 grid gap-3 sm:grid-cols-[1.4fr_0.9fr]">
+              <div className="rounded-2xl border border-slate-800/80 bg-slate-950/45 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">Profil</p>
+                <p className="mt-2 whitespace-pre-wrap text-sm text-slate-100">{profileCard.bio || 'Keine Bio gesetzt.'}</p>
+                {profileCard.email ? <p className="surface-muted mt-3 text-xs">E-Mail: {profileCard.email}</p> : null}
+              </div>
+              <div className="rounded-2xl border border-slate-800/80 bg-slate-950/45 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">Look & Feel</p>
+                <div className="mt-3 rounded-2xl border p-3" style={profileHeroStyle(profileCard)}>
+                  <p className="text-sm font-semibold" style={{ color: profileCard.accentColor ?? '#f8fafc' }}>
+                    {profileCard.nicknameSlots?.find((slot) => slot.scope === 'global' && slot.nickname.trim())?.nickname || profileCard.fullName}
+                  </p>
+                  <p className="surface-muted text-xs">@{profileCard.username}</p>
+                  <div
+                    className="mt-3 h-2 rounded-full"
+                    style={{ background: `linear-gradient(90deg, ${profileCard.accentColor ?? '#38bdf8'}, ${hexToRgba(profileCard.accentColor, 0.2)})` }}
+                  />
+                </div>
+              </div>
+            </div>
 
             <div className="mt-4 flex gap-2">
               <button className="btn-soft text-xs" onClick={() => void startDirect(profileCard.id)}>

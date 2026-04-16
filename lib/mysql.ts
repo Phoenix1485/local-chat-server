@@ -155,7 +155,7 @@ async function createSchema(): Promise<void> {
       chat_id CHAR(36) NOT NULL,
       user_id CHAR(36) NOT NULL,
       joined_at BIGINT NOT NULL,
-      member_role ENUM('owner','admin','member') NOT NULL DEFAULT 'member',
+      member_role ENUM('owner','admin','moderator','member') NOT NULL DEFAULT 'member',
       left_at BIGINT NULL,
       PRIMARY KEY (chat_id, user_id),
       INDEX idx_memberships_user_id (user_id),
@@ -244,6 +244,53 @@ async function createSchema(): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS moderation_reports (
+      id CHAR(36) PRIMARY KEY,
+      chat_id CHAR(36) NOT NULL,
+      reporter_user_id CHAR(36) NOT NULL,
+      target_user_id CHAR(36) NULL,
+      message_id CHAR(36) NULL,
+      status ENUM('open','reviewing','resolved','dismissed') NOT NULL DEFAULT 'open',
+      reason ENUM('spam','harassment','hate','violence','sexual','impersonation','privacy','other') NOT NULL,
+      notes VARCHAR(500) NULL,
+      decision_notes VARCHAR(500) NULL,
+      decided_by_user_id CHAR(36) NULL,
+      decided_at BIGINT NULL,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      INDEX idx_moderation_reports_chat_status_created (chat_id, status, created_at),
+      INDEX idx_moderation_reports_reporter (reporter_user_id, created_at),
+      INDEX idx_moderation_reports_target (target_user_id, created_at),
+      INDEX idx_moderation_reports_message (message_id, created_at),
+      CONSTRAINT fk_moderation_reports_chat FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+      CONSTRAINT fk_moderation_reports_reporter FOREIGN KEY (reporter_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_moderation_reports_target FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE SET NULL,
+      CONSTRAINT fk_moderation_reports_message FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE SET NULL,
+      CONSTRAINT fk_moderation_reports_decider FOREIGN KEY (decided_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS group_member_restrictions (
+      chat_id CHAR(36) NOT NULL,
+      user_id CHAR(36) NOT NULL,
+      muted_until BIGINT NULL,
+      mute_reason VARCHAR(255) NULL,
+      banned_at BIGINT NULL,
+      banned_by_user_id CHAR(36) NULL,
+      ban_reason VARCHAR(255) NULL,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      PRIMARY KEY (chat_id, user_id),
+      INDEX idx_group_member_restrictions_muted_until (muted_until),
+      INDEX idx_group_member_restrictions_banned_at (banned_at),
+      CONSTRAINT fk_group_member_restrictions_chat FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+      CONSTRAINT fk_group_member_restrictions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_group_member_restrictions_banned_by FOREIGN KEY (banned_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS rate_limits (
       rate_key VARCHAR(191) PRIMARY KEY,
       count INT NOT NULL,
@@ -264,6 +311,8 @@ async function createSchema(): Promise<void> {
       last_name VARCHAR(64) NOT NULL,
       bio VARCHAR(280) NOT NULL DEFAULT '',
       global_role ENUM('user','admin','superadmin') NOT NULL DEFAULT 'user',
+      accent_color CHAR(7) NOT NULL DEFAULT '#38bdf8',
+      chat_background ENUM('aurora','sunset','midnight','forest','paper') NOT NULL DEFAULT 'aurora',
       avatar_blob LONGBLOB NULL,
       avatar_mime VARCHAR(255) NULL,
       avatar_updated_at BIGINT NULL,
@@ -273,6 +322,23 @@ async function createSchema(): Promise<void> {
       UNIQUE KEY uq_auth_accounts_email_norm (email_norm),
       INDEX idx_auth_accounts_global_role (global_role),
       CONSTRAINT fk_auth_accounts_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_nickname_slots (
+      id CHAR(36) PRIMARY KEY,
+      user_id CHAR(36) NOT NULL,
+      nickname VARCHAR(32) NOT NULL,
+      nickname_norm VARCHAR(32) NOT NULL,
+      scope ENUM('global','chat') NOT NULL,
+      chat_id CHAR(36) NULL,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      INDEX idx_user_nickname_slots_user (user_id, updated_at),
+      INDEX idx_user_nickname_slots_scope_chat (scope, chat_id),
+      CONSTRAINT fk_user_nickname_slots_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_user_nickname_slots_chat FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
 
@@ -450,9 +516,12 @@ async function createSchema(): Promise<void> {
 
   if (!(await hasColumn(pool, 'chat_memberships', 'member_role'))) {
     await pool.query(
-      "ALTER TABLE chat_memberships ADD COLUMN member_role ENUM('owner','admin','member') NOT NULL DEFAULT 'member' AFTER joined_at"
+      "ALTER TABLE chat_memberships ADD COLUMN member_role ENUM('owner','admin','moderator','member') NOT NULL DEFAULT 'member' AFTER joined_at"
     );
   }
+  await pool.query(
+    "ALTER TABLE chat_memberships MODIFY COLUMN member_role ENUM('owner','admin','moderator','member') NOT NULL DEFAULT 'member'"
+  );
   if (!(await hasIndex(pool, 'chat_memberships', 'idx_memberships_role'))) {
     await pool.query('ALTER TABLE chat_memberships ADD INDEX idx_memberships_role (member_role)');
   }
@@ -462,6 +531,12 @@ async function createSchema(): Promise<void> {
   }
   if (!(await hasIndex(pool, 'rate_limits', 'idx_rate_limits_reset_at'))) {
     await pool.query('ALTER TABLE rate_limits ADD INDEX idx_rate_limits_reset_at (reset_at)');
+  }
+  if (!(await hasColumn(pool, 'auth_accounts', 'accent_color'))) {
+    await pool.query("ALTER TABLE auth_accounts ADD COLUMN accent_color CHAR(7) NOT NULL DEFAULT '#38bdf8' AFTER global_role");
+  }
+  if (!(await hasColumn(pool, 'auth_accounts', 'chat_background'))) {
+    await pool.query("ALTER TABLE auth_accounts ADD COLUMN chat_background ENUM('aurora','sunset','midnight','forest','paper') NOT NULL DEFAULT 'aurora' AFTER accent_color");
   }
 
   await pool.query<ResultSetHeader>(

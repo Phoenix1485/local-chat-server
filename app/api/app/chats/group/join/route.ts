@@ -1,4 +1,5 @@
 import { requireSession } from '@/lib/appAuth';
+import { PermissionDeniedError } from '@/lib/groupPermissions';
 import { enforceSameOrigin, jsonError } from '@/lib/http';
 import { socialStore } from '@/lib/socialStore';
 
@@ -36,6 +37,9 @@ export async function POST(request: Request): Promise<Response> {
     const chat = await socialStore.joinGroupByInviteCode(auth.session.user.id, inviteCode);
     return Response.json({ chat });
   } catch (error) {
+    if (error instanceof PermissionDeniedError) {
+      return jsonError(error.message, 403);
+    }
     return jsonError(error instanceof Error ? error.message : 'Group join failed.', 422);
   }
 }

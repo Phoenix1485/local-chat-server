@@ -1,6 +1,10 @@
 export type GlobalRole = 'user' | 'admin' | 'superadmin';
 
-export type GroupMemberRole = 'owner' | 'admin' | 'member';
+export type GroupMemberRole = 'owner' | 'admin' | 'moderator' | 'member';
+
+export type ChatBackgroundPreset = 'aurora' | 'sunset' | 'midnight' | 'forest' | 'paper';
+
+export type NicknameScope = 'global' | 'chat';
 
 export type ChatKind = 'global' | 'group' | 'direct';
 
@@ -16,11 +20,23 @@ export type AppUserProfile = {
   firstName: string;
   lastName: string;
   fullName: string;
+  legalName?: string;
   bio: string;
   email: string | null;
   avatarUpdatedAt: number | null;
   role: GlobalRole;
+  accentColor?: string;
+  chatBackground?: ChatBackgroundPreset;
+  nicknameSlots?: AppNicknameSlot[];
   isFriend?: boolean;
+};
+
+export type AppNicknameSlot = {
+  id: string;
+  nickname: string;
+  scope: NicknameScope;
+  chatId: string | null;
+  chatName: string | null;
 };
 
 export type FriendRequestState = 'pending' | 'accepted' | 'declined' | 'cancelled';
@@ -59,6 +75,9 @@ export type AppChatMember = {
   joinedAt: number;
   role: GroupMemberRole;
   isOnline: boolean;
+  mutedUntil: number | null;
+  banActive: boolean;
+  moderationNote: string | null;
 };
 
 export type AppChatMessage = {
@@ -152,6 +171,38 @@ export type AppModerationLog = {
   createdAt: number;
 };
 
+export type AppModerationReportStatus = 'open' | 'reviewing' | 'resolved' | 'dismissed';
+
+export type AppModerationReportReason =
+  | 'spam'
+  | 'harassment'
+  | 'hate'
+  | 'violence'
+  | 'sexual'
+  | 'impersonation'
+  | 'privacy'
+  | 'other';
+
+export type AppModerationReport = {
+  id: string;
+  chatId: string;
+  status: AppModerationReportStatus;
+  reason: AppModerationReportReason;
+  reporterUserId: string;
+  reporterName: string;
+  targetUserId: string | null;
+  targetName: string | null;
+  messageId: string | null;
+  messagePreview: string | null;
+  notes: string | null;
+  decisionNotes: string | null;
+  decidedByUserId: string | null;
+  decidedByName: string | null;
+  decidedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type AppGroupSettings = {
   inviteMode: GroupInviteMode;
   invitePolicy: GroupInvitePolicy;
@@ -162,6 +213,8 @@ export type AppGroupSettings = {
   canInviteDirectly: boolean;
   canManageUsers: boolean;
   canManageSettings: boolean;
+  canModerateMessages: boolean;
+  canViewModerationLogs: boolean;
   canTransferOwnership: boolean;
   canCloseGroup: boolean;
   everyoneMentionPolicy: GroupMentionPolicy;

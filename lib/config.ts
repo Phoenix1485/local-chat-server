@@ -35,6 +35,8 @@ export const APP_LIMITS = {
   profileFirstNameMax: 64,
   profileLastNameMax: 64,
   profileBioMax: 280,
+  profileNicknameMax: 32,
+  profileNicknameSlotsMax: 3,
   discoverPageSize: parsePositiveInt(process.env.APP_DISCOVER_PAGE_SIZE, 60),
   registerIpWindowMs: parsePositiveInt(process.env.APP_REGISTER_IP_WINDOW_MS, 10 * 60 * 1000),
   registerIpLimit: parsePositiveInt(process.env.APP_REGISTER_IP_LIMIT, 4),

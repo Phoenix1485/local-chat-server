@@ -2,13 +2,17 @@ import { requireSession } from '@/lib/appAuth';
 import { PermissionDeniedError } from '@/lib/groupPermissions';
 import { enforceSameOrigin, isUuid, jsonError } from '@/lib/http';
 import { socialStore } from '@/lib/socialStore';
+import type { AppModerationReportReason } from '@/types/social';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type PinPayload = {
+type ReportPayload = {
   chatId?: string;
-  messageId?: string;
+  messageId?: string | null;
+  targetUserId?: string | null;
+  reason?: AppModerationReportReason;
+  notes?: string | null;
 };
 
 export async function POST(request: Request): Promise<Response> {
@@ -22,7 +26,7 @@ export async function POST(request: Request): Promise<Response> {
     return auth.response;
   }
 
-  let payload: PinPayload;
+  let payload: ReportPayload;
   try {
     payload = await request.json();
   } catch {
@@ -31,20 +35,33 @@ export async function POST(request: Request): Promise<Response> {
 
   const chatId = payload.chatId?.trim() ?? '';
   const messageId = payload.messageId?.trim() ?? '';
+  const targetUserId = payload.targetUserId?.trim() ?? '';
+
   if (!chatId || !isUuid(chatId)) {
     return jsonError('Invalid chatId.', 422);
   }
-  if (!messageId || !isUuid(messageId)) {
+  if (messageId && !isUuid(messageId)) {
     return jsonError('Invalid messageId.', 422);
+  }
+  if (targetUserId && !isUuid(targetUserId)) {
+    return jsonError('Invalid targetUserId.', 422);
+  }
+  if (!payload.reason || !['spam', 'harassment', 'hate', 'violence', 'sexual', 'impersonation', 'privacy', 'other'].includes(payload.reason)) {
+    return jsonError('Invalid reason.', 422);
   }
 
   try {
-    const message = await socialStore.togglePinMessage(auth.session.user.id, chatId, messageId);
-    return Response.json({ message });
+    const report = await socialStore.createModerationReport(auth.session.user.id, chatId, {
+      messageId: messageId || null,
+      targetUserId: targetUserId || null,
+      reason: payload.reason,
+      notes: payload.notes ?? null
+    });
+    return Response.json({ report });
   } catch (error) {
     if (error instanceof PermissionDeniedError) {
       return jsonError(error.message, 403);
     }
-    return jsonError(error instanceof Error ? error.message : 'Pin toggle failed.', 422);
+    return jsonError(error instanceof Error ? error.message : 'Report could not be created.', 422);
   }
 }

@@ -1,6 +1,7 @@
 import { requireSession } from '@/lib/appAuth';
+import { PermissionDeniedError } from '@/lib/groupPermissions';
 import { enforceSameOrigin, isUuid, jsonError } from '@/lib/http';
-import { socialStore } from '@/lib/socialStore';
+import { GroupMutedError, socialStore } from '@/lib/socialStore';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -38,6 +39,9 @@ export async function POST(request: Request): Promise<Response> {
     await socialStore.setTyping(auth.session.user.id, chatId, isTyping);
     return Response.json({ ok: true });
   } catch (error) {
+    if (error instanceof PermissionDeniedError || error instanceof GroupMutedError) {
+      return jsonError(error.message, 403);
+    }
     return jsonError(error instanceof Error ? error.message : 'Typing update failed.', 422);
   }
 }

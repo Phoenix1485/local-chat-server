@@ -1,4 +1,5 @@
 import { requireSession } from '@/lib/appAuth';
+import { PermissionDeniedError } from '@/lib/groupPermissions';
 import { enforceSameOrigin, isUuid, jsonError } from '@/lib/http';
 import { socialStore } from '@/lib/socialStore';
 
@@ -85,6 +86,9 @@ export async function POST(request: Request): Promise<Response> {
     await socialStore.closeGroupChat(auth.session.user.id, chatId);
     return Response.json({ closed: true });
   } catch (error) {
+    if (error instanceof PermissionDeniedError) {
+      return jsonError(error.message, 403);
+    }
     return jsonError(error instanceof Error ? error.message : 'Group settings action failed.', 422);
   }
 }
