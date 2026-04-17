@@ -16,7 +16,9 @@ export default function AdminPage() {
   const [blacklistKind, setBlacklistKind] = useState<'name' | 'email'>('name');
   const [blacklistValue, setBlacklistValue] = useState('');
   const [blacklistNote, setBlacklistNote] = useState('');
+  const [networkMatchMode, setNetworkMatchMode] = useState<'ip' | 'mac' | 'both'>('ip');
   const [ipValue, setIpValue] = useState('');
+  const [macValue, setMacValue] = useState('');
   const [ipNote, setIpNote] = useState('');
   const [ipScope, setIpScope] = useState({
     forbidRegister: true,
@@ -162,7 +164,7 @@ export default function AdminPage() {
   const ipBlacklist = snapshot?.ipBlacklist ?? [];
   const ipAbuseFlags = snapshot?.ipAbuseFlags ?? [];
   const blacklistedIpSet = useMemo(
-    () => new Set(ipBlacklist.map((entry) => entry.ip.trim().toLowerCase())),
+    () => new Set(ipBlacklist.map((entry) => entry.ip?.trim().toLowerCase()).filter((value): value is string => Boolean(value))),
     [ipBlacklist]
   );
   const pendingCount = useMemo(() => pendingUsers.length, [pendingUsers.length]);
@@ -394,9 +396,14 @@ export default function AdminPage() {
       return;
     }
 
-    const ip = ipValue.trim();
-    if (!ip) {
-      setError('Bitte eine IP-Adresse eintragen.');
+    const ip = networkMatchMode === 'mac' ? '' : ipValue.trim();
+    const mac = networkMatchMode === 'ip' ? '' : macValue.trim();
+    if (!ip && !mac) {
+      setError('Bitte mindestens eine IP- oder MAC-Adresse eintragen.');
+      return;
+    }
+    if (networkMatchMode === 'both' && (!ip || !mac)) {
+      setError('Für die kombinierte Sperre sind IP und MAC erforderlich.');
       return;
     }
     if (!ipScope.forbidRegister && !ipScope.forbidLogin && !ipScope.forbidReset && !ipScope.forbidChat) {
@@ -414,20 +421,22 @@ export default function AdminPage() {
           'x-admin-token': activeToken
         },
         body: JSON.stringify({
-          ip,
+          ip: ip || null,
+          mac: mac || null,
           note: ipNote.trim() || null,
           scope: ipScope
         })
       });
       if (!response.ok) {
-        throw new Error(await readServerError(response, 'IP-Blacklist-Eintrag konnte nicht gespeichert werden.'));
+        throw new Error(await readServerError(response, 'IP/MAC-Blacklist-Eintrag konnte nicht gespeichert werden.'));
       }
       setIpValue('');
+      setMacValue('');
       setIpNote('');
       const next = await fetchSnapshot(activeToken);
       setSnapshot(next);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'IP-Blacklist-Eintrag konnte nicht gespeichert werden.');
+      setError(requestError instanceof Error ? requestError.message : 'IP/MAC-Blacklist-Eintrag konnte nicht gespeichert werden.');
     } finally {
       setIsUpdating(false);
     }
@@ -685,17 +694,46 @@ export default function AdminPage() {
       </section> : null}
 
       {snapshot ? <section className="glass-panel rounded-2xl p-4">
-        <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">IP-Blacklist</h2>
+        <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">IP/MAC-Blacklist</h2>
         <p className="surface-muted mt-1 text-sm">
-          Für jede IP-Adresse kannst du festlegen, welche Aktionen gesperrt werden und ob aktive Sessions sofort beendet werden.
+          Du kannst Regeln nur für IP, nur für MAC oder als Kombination aus IP + MAC anlegen. Eine MAC-Sperre greift nur,
+          wenn der Client beim Login bzw. Auth-Flow tatsächlich eine MAC mitsendet.
         </p>
 
-        <input
-          value={ipValue}
-          onChange={(event) => setIpValue(event.target.value)}
-          className="glass-input mt-3 text-sm"
-          placeholder="z.B. 203.0.113.5"
-        />
+        <div className="mt-3 inline-flex rounded-xl border border-slate-700/70 bg-slate-950/45 p-1">
+          {[
+            ['ip', 'Nur IP'],
+            ['mac', 'Nur MAC'],
+            ['both', 'IP + MAC']
+          ].map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              className={`rounded-lg px-3 py-2 text-sm ${networkMatchMode === mode ? 'bg-cyan-500/15 text-cyan-200' : 'text-slate-300'}`}
+              onClick={() => setNetworkMatchMode(mode as 'ip' | 'mac' | 'both')}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {networkMatchMode !== 'mac' ? (
+          <input
+            value={ipValue}
+            onChange={(event) => setIpValue(event.target.value)}
+            className="glass-input mt-3 text-sm"
+            placeholder="IP, z.B. 203.0.113.5"
+          />
+        ) : null}
+
+        {networkMatchMode !== 'ip' ? (
+          <input
+            value={macValue}
+            onChange={(event) => setMacValue(event.target.value)}
+            className="glass-input mt-2 text-sm"
+            placeholder="MAC, z.B. 00:11:22:33:44:55"
+          />
+        ) : null}
 
         <textarea
           value={ipNote}
@@ -737,7 +775,7 @@ export default function AdminPage() {
             }}
             className="btn-soft btn-danger disabled:cursor-not-allowed disabled:opacity-60"
           >
-            IP speichern
+            Regel speichern
           </button>
         </div>
 
@@ -746,7 +784,14 @@ export default function AdminPage() {
             <li key={entry.id} className="glass-card rounded-lg p-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm font-semibold text-slate-100">{entry.ip}</p>
+                  <p className="text-sm font-semibold text-slate-100">
+                    {entry.matchMode === 'ip_mac'
+                      ? `${entry.ip} + ${entry.mac}`
+                      : entry.ip ?? entry.mac ?? 'Unbekannt'}
+                  </p>
+                  <p className="mt-1 text-xs uppercase tracking-wide text-slate-400">
+                    {entry.matchMode === 'ip' ? 'Nur IP' : entry.matchMode === 'mac' ? 'Nur MAC' : 'IP + MAC'}
+                  </p>
                   <p className="mt-1 text-xs text-slate-400">
                     Aktionen:{' '}
                     {[
@@ -775,7 +820,7 @@ export default function AdminPage() {
               </div>
             </li>
           ))}
-          {ipBlacklist.length === 0 ? <li className="surface-muted text-sm">Keine IP-Sperren vorhanden.</li> : null}
+          {ipBlacklist.length === 0 ? <li className="surface-muted text-sm">Keine IP-/MAC-Sperren vorhanden.</li> : null}
         </ul>
       </section> : null}
 

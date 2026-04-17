@@ -351,9 +351,13 @@ async function createSchema(): Promise<void> {
       expires_at BIGINT NOT NULL,
       last_seen_at BIGINT NOT NULL,
       user_agent VARCHAR(255) NULL,
+      ip_norm VARCHAR(128) NOT NULL DEFAULT '',
+      device_mac_norm VARCHAR(32) NOT NULL DEFAULT '',
       UNIQUE KEY uq_auth_sessions_token_hash (token_hash),
       INDEX idx_auth_sessions_user_id (user_id),
       INDEX idx_auth_sessions_expires_at (expires_at),
+      INDEX idx_auth_sessions_ip_norm (ip_norm),
+      INDEX idx_auth_sessions_device_mac_norm (device_mac_norm),
       CONSTRAINT fk_auth_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
@@ -408,6 +412,7 @@ async function createSchema(): Promise<void> {
     CREATE TABLE IF NOT EXISTS app_ip_blacklist_entries (
       id CHAR(36) PRIMARY KEY,
       ip_norm VARCHAR(128) NOT NULL,
+      mac_norm VARCHAR(32) NOT NULL DEFAULT '',
       note VARCHAR(255) NULL,
       forbid_register TINYINT(1) NOT NULL DEFAULT 1,
       forbid_login TINYINT(1) NOT NULL DEFAULT 1,
@@ -416,7 +421,7 @@ async function createSchema(): Promise<void> {
       terminate_sessions TINYINT(1) NOT NULL DEFAULT 1,
       created_at BIGINT NOT NULL,
       updated_at BIGINT NOT NULL,
-      UNIQUE KEY uq_app_ip_blacklist_ip_norm (ip_norm),
+      UNIQUE KEY uq_app_ip_blacklist_ip_mac (ip_norm, mac_norm),
       INDEX idx_app_ip_blacklist_updated (updated_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
@@ -537,6 +542,27 @@ async function createSchema(): Promise<void> {
   }
   if (!(await hasColumn(pool, 'auth_accounts', 'chat_background'))) {
     await pool.query("ALTER TABLE auth_accounts ADD COLUMN chat_background ENUM('aurora','sunset','midnight','forest','paper') NOT NULL DEFAULT 'aurora' AFTER accent_color");
+  }
+  if (!(await hasColumn(pool, 'auth_sessions', 'ip_norm'))) {
+    await pool.query("ALTER TABLE auth_sessions ADD COLUMN ip_norm VARCHAR(128) NOT NULL DEFAULT '' AFTER user_agent");
+  }
+  if (!(await hasColumn(pool, 'auth_sessions', 'device_mac_norm'))) {
+    await pool.query("ALTER TABLE auth_sessions ADD COLUMN device_mac_norm VARCHAR(32) NOT NULL DEFAULT '' AFTER ip_norm");
+  }
+  if (!(await hasIndex(pool, 'auth_sessions', 'idx_auth_sessions_ip_norm'))) {
+    await pool.query('ALTER TABLE auth_sessions ADD INDEX idx_auth_sessions_ip_norm (ip_norm)');
+  }
+  if (!(await hasIndex(pool, 'auth_sessions', 'idx_auth_sessions_device_mac_norm'))) {
+    await pool.query('ALTER TABLE auth_sessions ADD INDEX idx_auth_sessions_device_mac_norm (device_mac_norm)');
+  }
+  if (!(await hasColumn(pool, 'app_ip_blacklist_entries', 'mac_norm'))) {
+    await pool.query("ALTER TABLE app_ip_blacklist_entries ADD COLUMN mac_norm VARCHAR(32) NOT NULL DEFAULT '' AFTER ip_norm");
+  }
+  if (await hasIndex(pool, 'app_ip_blacklist_entries', 'uq_app_ip_blacklist_ip_norm')) {
+    await pool.query('ALTER TABLE app_ip_blacklist_entries DROP INDEX uq_app_ip_blacklist_ip_norm');
+  }
+  if (!(await hasIndex(pool, 'app_ip_blacklist_entries', 'uq_app_ip_blacklist_ip_mac'))) {
+    await pool.query('ALTER TABLE app_ip_blacklist_entries ADD UNIQUE INDEX uq_app_ip_blacklist_ip_mac (ip_norm, mac_norm)');
   }
 
   await pool.query<ResultSetHeader>(

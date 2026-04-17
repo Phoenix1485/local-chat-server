@@ -65,6 +65,8 @@ type SessionRow = RowDataPacket & {
   user_id: string;
   expires_at: number;
   last_seen_at: number;
+  ip_norm: string;
+  device_mac_norm: string;
 };
 
 type CountRow = RowDataPacket & {
@@ -188,6 +190,7 @@ type BlacklistEntryRow = RowDataPacket & {
 type IpBlacklistEntryRow = RowDataPacket & {
   id: string;
   ip_norm: string;
+  mac_norm: string;
   note: string | null;
   forbid_register: number;
   forbid_login: number;
@@ -398,7 +401,9 @@ type IpRestrictionScope = {
 
 type IpBlacklistEntry = {
   id: string;
-  ip: string;
+  ip: string | null;
+  mac: string | null;
+  matchMode: 'ip' | 'mac' | 'ip_mac';
   note: string | null;
   scope: IpRestrictionScope;
   createdAt: number;
@@ -505,6 +510,20 @@ function normalizeIp(value: string): string {
   return value.trim().toLowerCase().slice(0, 128);
 }
 
+function normalizeMac(value: string): string {
+  const cleaned = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^0-9a-f]/g, '');
+  if (!cleaned) {
+    return '';
+  }
+  if (cleaned.length !== 12) {
+    return '';
+  }
+  return cleaned.match(/.{1,2}/g)?.join(':') ?? '';
+}
+
 function normalizeDisplayName(value: string): string {
   return value
     .normalize('NFKD')
@@ -538,9 +557,13 @@ function normalizeGroupMessageCooldownMs(value: number): number {
 }
 
 function mapIpBlacklistEntry(row: IpBlacklistEntryRow): IpBlacklistEntry {
+  const ip = row.ip_norm?.trim() || null;
+  const mac = row.mac_norm?.trim() || null;
   return {
     id: row.id,
-    ip: row.ip_norm,
+    ip,
+    mac,
+    matchMode: ip && mac ? 'ip_mac' : mac ? 'mac' : 'ip',
     note: row.note,
     scope: {
       forbidRegister: asNumber(row.forbid_register, 0) > 0,
@@ -925,6 +948,7 @@ function mapNicknameSlot(row: NicknameSlotRow): AppNicknameSlot {
 export type UserSessionContext = {
   sessionId: string;
   tokenExpiresAt: number;
+  deviceMac: string | null;
   user: AppUserProfile;
 };
 
@@ -1078,61 +1102,109 @@ export class SocialStore {
     });
   }
 
-  private async getIpBlacklistEntry(ip: string): Promise<IpBlacklistEntryRow | null> {
+  private async listMatchingIpBlacklistEntries(ip: string, mac?: string | null): Promise<IpBlacklistEntryRow[]> {
     await this.ensureReady();
     const ipNorm = normalizeIp(ip);
-    if (!ipNorm || ipNorm === 'unknown') {
-      return null;
+    const macNorm = normalizeMac(mac ?? '');
+    const clauses: string[] = [];
+    const params: Array<string> = [];
+
+    if (ipNorm && ipNorm !== 'unknown' && macNorm) {
+      clauses.push('(ip_norm = ? AND mac_norm = ?)');
+      params.push(ipNorm, macNorm);
+    }
+    if (ipNorm && ipNorm !== 'unknown') {
+      clauses.push("(ip_norm = ? AND mac_norm = '')");
+      params.push(ipNorm);
+    }
+    if (macNorm) {
+      clauses.push("(ip_norm = '' AND mac_norm = ?)");
+      params.push(macNorm);
+    }
+
+    if (clauses.length === 0) {
+      return [];
     }
     const pool = getMysqlPool();
     const [rows] = await pool.query<IpBlacklistEntryRow[]>(
       `
-        SELECT id, ip_norm, note, forbid_register, forbid_login, forbid_reset, forbid_chat, terminate_sessions, created_at, updated_at
+        SELECT id, ip_norm, mac_norm, note, forbid_register, forbid_login, forbid_reset, forbid_chat, terminate_sessions, created_at, updated_at
         FROM app_ip_blacklist_entries
-        WHERE ip_norm = ?
-        LIMIT 1
+        WHERE ${clauses.join(' OR ')}
+        ORDER BY
+          CASE
+            WHEN ip_norm <> '' AND mac_norm <> '' THEN 3
+            WHEN ip_norm <> '' OR mac_norm <> '' THEN 2
+            ELSE 1
+          END DESC,
+          updated_at DESC
       `,
-      [ipNorm]
+      params
     );
-    return rows[0] ?? null;
+    return rows;
   }
 
-  private async terminateSessionsForIp(ip: string): Promise<void> {
+  private async terminateSessionsForEntries(entries: IpBlacklistEntryRow[]): Promise<void> {
     await this.ensureReady();
-    const ipNorm = normalizeIp(ip);
-    if (!ipNorm || ipNorm === 'unknown') {
+    if (entries.length === 0) {
       return;
     }
     const pool = getMysqlPool();
+    const clauses: string[] = [];
+    const params: string[] = [];
+
+    for (const entry of entries) {
+      const ipNorm = String(entry.ip_norm ?? '').trim().toLowerCase();
+      const macNorm = String(entry.mac_norm ?? '').trim().toLowerCase();
+      if (ipNorm && macNorm) {
+        clauses.push('(ip_norm = ? AND device_mac_norm = ?)');
+        params.push(ipNorm, macNorm);
+      } else if (ipNorm) {
+        clauses.push('(ip_norm = ?)');
+        params.push(ipNorm);
+      } else if (macNorm) {
+        clauses.push('(device_mac_norm = ?)');
+        params.push(macNorm);
+      }
+    }
+
+    if (clauses.length === 0) {
+      return;
+    }
+
     await pool.query<ResultSetHeader>(
       `
-        DELETE s
-        FROM auth_sessions s
-        JOIN users u ON u.id = s.user_id
-        WHERE LOWER(u.ip) = ?
+        DELETE FROM auth_sessions
+        WHERE ${clauses.join(' OR ')}
       `,
-      [ipNorm]
+      params
     );
   }
 
-  private async assertIpAllowed(ip: string, action: 'register' | 'login' | 'reset' | 'chat'): Promise<void> {
-    const entry = await this.getIpBlacklistEntry(ip);
-    if (!entry) {
+  private async assertNetworkAllowed(
+    input: { ip?: string | null; mac?: string | null },
+    action: 'register' | 'login' | 'reset' | 'chat'
+  ): Promise<void> {
+    const entries = await this.listMatchingIpBlacklistEntries(input.ip ?? '', input.mac ?? '');
+    if (entries.length === 0) {
       return;
     }
-    const scope = mapIpBlacklistEntry(entry).scope;
-    const blocked =
-      (action === 'register' && scope.forbidRegister) ||
-      (action === 'login' && scope.forbidLogin) ||
-      (action === 'reset' && scope.forbidReset) ||
-      (action === 'chat' && scope.forbidChat);
+    const blocked = entries.some((entry) => {
+      const scope = mapIpBlacklistEntry(entry).scope;
+      return (
+        (action === 'register' && scope.forbidRegister) ||
+        (action === 'login' && scope.forbidLogin) ||
+        (action === 'reset' && scope.forbidReset) ||
+        (action === 'chat' && scope.forbidChat)
+      );
+    });
     if (!blocked) {
       return;
     }
-    if (scope.terminateSessions) {
-      await this.terminateSessionsForIp(ip);
+    if (entries.some((entry) => mapIpBlacklistEntry(entry).scope.terminateSessions)) {
+      await this.terminateSessionsForEntries(entries);
     }
-    throw new IpRestrictedError('Diese IP-Adresse ist für diese Aktion gesperrt.', 403);
+    throw new IpRestrictedError('Diese IP-/MAC-Adresse ist für diese Aktion gesperrt.', 403);
   }
 
   private async registerIpAbuse(ip: string, reason: string, strikeDelta = 1): Promise<void> {
@@ -1175,6 +1247,7 @@ export class SocialStore {
     if (blockedUntil) {
       await this.addIpBlacklistEntry(
         ipNorm,
+        null,
         {
           forbidRegister: true,
           forbidLogin: true,
@@ -1184,7 +1257,6 @@ export class SocialStore {
         },
         `Auto block: ${reason.slice(0, 80)}`
       );
-      await this.terminateSessionsForIp(ipNorm);
     }
   }
 
@@ -1222,7 +1294,7 @@ export class SocialStore {
     );
   }
 
-  private async buildSession(userId: string, sessionId: string, expiresAt: number): Promise<UserSessionContext> {
+  private async buildSession(userId: string, sessionId: string, expiresAt: number, deviceMac: string | null): Promise<UserSessionContext> {
     const account = await this.getAccountByUserId(userId);
     if (!account) {
       throw new Error('Account not found.');
@@ -1231,11 +1303,17 @@ export class SocialStore {
     return {
       sessionId,
       tokenExpiresAt: expiresAt,
+      deviceMac,
       user: mapProfile(account, { includeEmail: true })
     };
   }
 
-  private async createSession(userId: string, userAgent: string): Promise<{ token: string; session: UserSessionContext }> {
+  private async createSession(
+    userId: string,
+    userAgent: string,
+    ip: string,
+    deviceMac?: string | null
+  ): Promise<{ token: string; session: UserSessionContext }> {
     await this.ensureReady();
     const pool = getMysqlPool();
     const now = Date.now();
@@ -1243,18 +1321,20 @@ export class SocialStore {
     const tokenHash = hashToken(token);
     const sessionId = randomUUID();
     const expiresAt = now + APP_LIMITS.sessionTtlMs;
+    const ipNorm = normalizeIp(ip);
+    const macNorm = normalizeMac(deviceMac ?? '');
 
     await this.cleanupExpiredSessions(now);
 
     await pool.query<ResultSetHeader>(
       `
-        INSERT INTO auth_sessions (id, user_id, token_hash, created_at, expires_at, last_seen_at, user_agent)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO auth_sessions (id, user_id, token_hash, created_at, expires_at, last_seen_at, user_agent, ip_norm, device_mac_norm)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
-      [sessionId, userId, tokenHash, now, expiresAt, now, userAgent.slice(0, 255)]
+      [sessionId, userId, tokenHash, now, expiresAt, now, userAgent.slice(0, 255), ipNorm, macNorm]
     );
 
-    const session = await this.buildSession(userId, sessionId, expiresAt);
+    const session = await this.buildSession(userId, sessionId, expiresAt, macNorm || null);
     return { token, session };
   }
 
@@ -1958,6 +2038,7 @@ export class SocialStore {
     lastName: string;
     ip: string;
     userAgent: string;
+    deviceMac?: string | null;
   }): Promise<{ userId: string; status: 'pending' }> {
     await this.ensureReady();
     const pool = getMysqlPool();
@@ -1967,11 +2048,16 @@ export class SocialStore {
     const email = input.email?.trim() ? input.email.trim() : null;
     const emailNorm = email ? normalizeEmail(email) : null;
     const ipNorm = normalizeIp(input.ip);
+    const rawMac = input.deviceMac?.trim() ?? '';
+    const macNorm = normalizeMac(rawMac);
+    if (rawMac && !macNorm) {
+      throw new Error('Ungültige MAC-Adresse.');
+    }
     const displayName = `${input.firstName.trim()} ${input.lastName.trim()}`.trim() || username;
     const displayNameNorm = normalizeDisplayName(displayName);
     const fingerprint = simplifyNameFingerprint(displayName);
 
-    await this.assertIpAllowed(ipNorm, 'register');
+    await this.assertNetworkAllowed({ ip: ipNorm, mac: macNorm }, 'register');
     await this.enforceIpRateLimit(ipNorm, 'register', APP_LIMITS.registerIpLimit, APP_LIMITS.registerIpWindowMs, 'register-rate');
     await this.enforceIpRateLimit(ipNorm, 'register-daily', APP_LIMITS.registerIpDailyLimit, 24 * 60 * 60 * 1000, 'register-daily');
 
@@ -2101,9 +2187,15 @@ export class SocialStore {
     password: string;
     userAgent: string;
     ip: string;
+    deviceMac?: string | null;
   }): Promise<{ token: string; session: UserSessionContext } | null> {
     const ipNorm = normalizeIp(input.ip);
-    await this.assertIpAllowed(ipNorm, 'login');
+    const rawMac = input.deviceMac?.trim() ?? '';
+    const macNorm = normalizeMac(rawMac);
+    if (rawMac && !macNorm) {
+      throw new Error('Ungültige MAC-Adresse.');
+    }
+    await this.assertNetworkAllowed({ ip: ipNorm, mac: macNorm }, 'login');
     await this.enforceIpRateLimit(ipNorm, 'login', APP_LIMITS.loginIpLimit, APP_LIMITS.loginIpWindowMs, 'login-rate');
     await this.enforceIpRateLimit(ipNorm, 'login-burst', APP_LIMITS.loginIpBurstLimit, APP_LIMITS.loginIpBurstWindowMs, 'login-burst');
 
@@ -2129,7 +2221,7 @@ export class SocialStore {
       return null;
     }
 
-    return this.createSession(account.user_id, input.userAgent);
+    return this.createSession(account.user_id, input.userAgent, ipNorm, macNorm);
   }
 
   async resolveSession(token: string): Promise<UserSessionContext | null> {
@@ -2142,7 +2234,7 @@ export class SocialStore {
 
     const [rows] = await pool.query<SessionRow[]>(
       `
-        SELECT id, user_id, expires_at, last_seen_at
+        SELECT id, user_id, expires_at, last_seen_at, ip_norm, device_mac_norm
         FROM auth_sessions
         WHERE token_hash = ?
         LIMIT 1
@@ -2164,7 +2256,7 @@ export class SocialStore {
       await pool.query<ResultSetHeader>('UPDATE auth_sessions SET last_seen_at = ? WHERE id = ?', [now, row.id]);
     }
 
-    return this.buildSession(row.user_id, row.id, asNumber(row.expires_at));
+    return this.buildSession(row.user_id, row.id, asNumber(row.expires_at), row.device_mac_norm?.trim() || null);
   }
 
   async logoutSession(token: string): Promise<void> {
@@ -2174,11 +2266,16 @@ export class SocialStore {
     await pool.query<ResultSetHeader>('DELETE FROM auth_sessions WHERE token_hash = ?', [tokenHash]);
   }
 
-  async requestPasswordReset(identifier: string, ip: string): Promise<string | null> {
+  async requestPasswordReset(identifier: string, ip: string, deviceMac?: string | null): Promise<string | null> {
     await this.ensureReady();
     const pool = getMysqlPool();
     const ipNorm = normalizeIp(ip);
-    await this.assertIpAllowed(ipNorm, 'reset');
+    const rawMac = deviceMac?.trim() ?? '';
+    const macNorm = normalizeMac(rawMac);
+    if (rawMac && !macNorm) {
+      throw new Error('Ungültige MAC-Adresse.');
+    }
+    await this.assertNetworkAllowed({ ip: ipNorm, mac: macNorm }, 'reset');
     await this.enforceIpRateLimit(ipNorm, 'reset', APP_LIMITS.resetIpLimit, APP_LIMITS.resetIpWindowMs, 'reset-rate');
     const account = await this.getAccountByIdentifier(identifier);
     if (!account) {
@@ -2235,12 +2332,17 @@ export class SocialStore {
     return null;
   }
 
-  async resetPassword(token: string, newPassword: string, ip: string): Promise<boolean> {
+  async resetPassword(token: string, newPassword: string, ip: string, deviceMac?: string | null): Promise<boolean> {
     await this.ensureReady();
     const pool = getMysqlPool();
     const now = Date.now();
     const ipNorm = normalizeIp(ip);
-    await this.assertIpAllowed(ipNorm, 'reset');
+    const rawMac = deviceMac?.trim() ?? '';
+    const macNorm = normalizeMac(rawMac);
+    if (rawMac && !macNorm) {
+      throw new Error('Ungültige MAC-Adresse.');
+    }
+    await this.assertNetworkAllowed({ ip: ipNorm, mac: macNorm }, 'reset');
     await this.enforceIpRateLimit(ipNorm, 'reset-token', APP_LIMITS.resetIpLimit, APP_LIMITS.resetIpWindowMs, 'reset-token-rate');
     const tokenHash = hashToken(token);
 
@@ -4398,13 +4500,16 @@ export class SocialStore {
     return upload;
   }
 
-  async addMessage(userId: string, chatId: string, input: AddMessageInput, ip?: string): Promise<AppChatMessage> {
+  async addMessage(userId: string, chatId: string, input: AddMessageInput, ip?: string, deviceMac?: string | null): Promise<AppChatMessage> {
     await this.ensureReady();
     const pool = getMysqlPool();
     const now = Date.now();
     const ipNorm = normalizeIp(ip ?? '');
+    const macNorm = normalizeMac(deviceMac ?? '');
+    if (ipNorm || macNorm) {
+      await this.assertNetworkAllowed({ ip: ipNorm, mac: macNorm }, 'chat');
+    }
     if (ipNorm) {
-      await this.assertIpAllowed(ipNorm, 'chat');
       await this.enforceIpRateLimit(ipNorm, `chat:${chatId}`, CHAT_LIMITS.spamLongWindowLimit * 3, CHAT_LIMITS.spamLongWindowMs, 'chat-rate');
     }
     const role = await this.getMembershipRole(userId, chatId);
@@ -5005,9 +5110,9 @@ export class SocialStore {
     const pool = getMysqlPool();
     const [rows] = await pool.query<IpBlacklistEntryRow[]>(
       `
-        SELECT id, ip_norm, note, forbid_register, forbid_login, forbid_reset, forbid_chat, terminate_sessions, created_at, updated_at
+        SELECT id, ip_norm, mac_norm, note, forbid_register, forbid_login, forbid_reset, forbid_chat, terminate_sessions, created_at, updated_at
         FROM app_ip_blacklist_entries
-        ORDER BY updated_at DESC, ip_norm ASC
+        ORDER BY updated_at DESC, ip_norm ASC, mac_norm ASC
       `
     );
     return rows.map(mapIpBlacklistEntry);
@@ -5029,12 +5134,23 @@ export class SocialStore {
     return rows.map(mapIpAbuseFlag);
   }
 
-  async addIpBlacklistEntry(ip: string, scope: IpRestrictionScope, note?: string | null): Promise<IpBlacklistEntry> {
+  async addIpBlacklistEntry(
+    ip: string | null | undefined,
+    mac: string | null | undefined,
+    scope: IpRestrictionScope,
+    note?: string | null
+  ): Promise<IpBlacklistEntry> {
     await this.ensureReady();
     const pool = getMysqlPool();
-    const ipNorm = normalizeIp(ip);
-    if (!ipNorm || ipNorm === 'unknown') {
-      throw new Error('Ungültige IP-Adresse.');
+    const ipNormRaw = normalizeIp(ip ?? '');
+    const ipNorm = ipNormRaw === 'unknown' ? '' : ipNormRaw;
+    const rawMac = mac?.trim() ?? '';
+    const macNorm = normalizeMac(rawMac);
+    if (rawMac && !macNorm) {
+      throw new Error('Ungültige MAC-Adresse.');
+    }
+    if (!ipNorm && !macNorm) {
+      throw new Error('Mindestens IP oder MAC-Adresse ist erforderlich.');
     }
     if (!scope.forbidRegister && !scope.forbidLogin && !scope.forbidReset && !scope.forbidChat) {
       throw new Error('Mindestens eine Sperre muss aktiv sein.');
@@ -5045,9 +5161,9 @@ export class SocialStore {
     await pool.query<ResultSetHeader>(
       `
         INSERT INTO app_ip_blacklist_entries (
-          id, ip_norm, note, forbid_register, forbid_login, forbid_reset, forbid_chat, terminate_sessions, created_at, updated_at
+          id, ip_norm, mac_norm, note, forbid_register, forbid_login, forbid_reset, forbid_chat, terminate_sessions, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           note = VALUES(note),
           forbid_register = VALUES(forbid_register),
@@ -5060,6 +5176,7 @@ export class SocialStore {
       [
         id,
         ipNorm,
+        macNorm,
         note?.trim().slice(0, 255) || null,
         scope.forbidRegister ? 1 : 0,
         scope.forbidLogin ? 1 : 0,
@@ -5072,17 +5189,30 @@ export class SocialStore {
     );
 
     if (scope.terminateSessions) {
-      await this.terminateSessionsForIp(ipNorm);
+      const [matches] = await pool.query<IpBlacklistEntryRow[]>(
+        `
+          SELECT id, ip_norm, mac_norm, note, forbid_register, forbid_login, forbid_reset, forbid_chat, terminate_sessions, created_at, updated_at
+          FROM app_ip_blacklist_entries
+          WHERE ip_norm = ?
+            AND mac_norm = ?
+          LIMIT 1
+        `,
+        [ipNorm, macNorm]
+      );
+      if (matches[0]) {
+        await this.terminateSessionsForEntries([matches[0]]);
+      }
     }
 
     const [rows] = await pool.query<IpBlacklistEntryRow[]>(
       `
-        SELECT id, ip_norm, note, forbid_register, forbid_login, forbid_reset, forbid_chat, terminate_sessions, created_at, updated_at
+        SELECT id, ip_norm, mac_norm, note, forbid_register, forbid_login, forbid_reset, forbid_chat, terminate_sessions, created_at, updated_at
         FROM app_ip_blacklist_entries
         WHERE ip_norm = ?
+          AND mac_norm = ?
         LIMIT 1
       `,
-      [ipNorm]
+      [ipNorm, macNorm]
     );
     const entry = rows[0];
     if (!entry) {

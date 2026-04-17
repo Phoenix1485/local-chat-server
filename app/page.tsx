@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 type AuthMode = 'login' | 'register' | 'forgot' | 'reset';
 
 const TOKEN_KEY = 'chat_auth_token';
+const DEVICE_MAC_KEY = 'chat_device_mac';
 
 async function requestJson(path: string, init?: RequestInit, token?: string) {
   const headers = new Headers(init?.headers ?? {});
@@ -40,6 +41,7 @@ export default function AuthPage() {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
+  const [deviceMac, setDeviceMac] = useState('');
   const [resetToken, setResetToken] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -47,6 +49,8 @@ export default function AuthPage() {
 
   useEffect(() => {
     const token = localStorage.getItem(TOKEN_KEY);
+    const storedDeviceMac = localStorage.getItem(DEVICE_MAC_KEY) ?? '';
+    setDeviceMac(storedDeviceMac);
     if (!token) {
       return;
     }
@@ -62,6 +66,18 @@ export default function AuthPage() {
       });
   }, [router]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const normalized = deviceMac.trim();
+    if (normalized) {
+      localStorage.setItem(DEVICE_MAC_KEY, normalized);
+    } else {
+      localStorage.removeItem(DEVICE_MAC_KEY);
+    }
+  }, [deviceMac]);
+
   const onLogin = async (event: FormEvent) => {
     event.preventDefault();
     setError(null);
@@ -71,7 +87,7 @@ export default function AuthPage() {
     try {
       const payload = await requestJson('/api/app/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ identifier, password })
+        body: JSON.stringify({ identifier, password, deviceMac: deviceMac.trim() || null })
       });
 
       const token = String(payload.token ?? '');
@@ -97,7 +113,7 @@ export default function AuthPage() {
     try {
       const payload = await requestJson('/api/app/auth/register', {
         method: 'POST',
-        body: JSON.stringify({ username, password, firstName, lastName, email })
+        body: JSON.stringify({ username, password, firstName, lastName, email, deviceMac: deviceMac.trim() || null })
       });
 
       const status = String(payload.status ?? '');
@@ -123,7 +139,7 @@ export default function AuthPage() {
     try {
       const payload = await requestJson('/api/app/auth/forgot', {
         method: 'POST',
-        body: JSON.stringify({ identifier })
+        body: JSON.stringify({ identifier, deviceMac: deviceMac.trim() || null })
       });
 
       const token = typeof payload.resetToken === 'string' ? payload.resetToken : '';
@@ -153,7 +169,7 @@ export default function AuthPage() {
     try {
       await requestJson('/api/app/auth/reset', {
         method: 'POST',
-        body: JSON.stringify({ token: resetToken, password })
+        body: JSON.stringify({ token: resetToken, password, deviceMac: deviceMac.trim() || null })
       });
 
       setInfo('Passwort aktualisiert. Bitte jetzt einloggen.');
@@ -286,6 +302,22 @@ export default function AuthPage() {
               </motion.form>
             ) : null}
           </AnimatePresence>
+
+          <div className="mt-5 rounded-xl border border-slate-800/80 bg-slate-950/45 p-4">
+            <label className="block space-y-1">
+              <span className="surface-muted text-xs uppercase tracking-wide">Geräte-MAC optional</span>
+              <input
+                className="glass-input"
+                placeholder="z.B. 00:11:22:33:44:55"
+                value={deviceMac}
+                onChange={(event) => setDeviceMac(event.target.value)}
+              />
+            </label>
+            <p className="surface-muted mt-2 text-xs">
+              Wird nur für MAC-Sperren verwendet. In einem normalen Browser kann die MAC-Adresse nicht automatisch ausgelesen werden,
+              deshalb ist hier nur manuelle Eingabe oder ein lokaler/native Client mit Header-Unterstützung möglich.
+            </p>
+          </div>
 
           {error ? <motion.p role="alert" aria-live="assertive" className="alert-error mt-4 rounded-lg px-3 py-2 text-sm" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}>{error}</motion.p> : null}
           {info ? <motion.p role="status" aria-live="polite" className="alert-info mt-4 rounded-lg px-3 py-2 text-sm" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}>{info}</motion.p> : null}

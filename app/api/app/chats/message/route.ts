@@ -123,7 +123,7 @@ export async function POST(request: Request): Promise<Response> {
             options: Array.isArray(poll?.options) ? poll.options : []
           }
         : null
-    }, getClientIp(request));
+    }, getClientIp(request), auth.session.deviceMac);
     return Response.json({ message });
   } catch (error) {
     if (error instanceof PermissionDeniedError) {

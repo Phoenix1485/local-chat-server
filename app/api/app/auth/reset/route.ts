@@ -1,4 +1,4 @@
-import { enforceSameOrigin, getClientIp, jsonError } from '@/lib/http';
+import { enforceSameOrigin, getClientDeviceMac, getClientIp, jsonError } from '@/lib/http';
 import { socialStore } from '@/lib/socialStore';
 import { validatePassword } from '@/lib/validation';
 
@@ -8,6 +8,7 @@ export const dynamic = 'force-dynamic';
 type ResetPayload = {
   token?: string;
   password?: string;
+  deviceMac?: string;
 };
 
 export async function POST(request: Request): Promise<Response> {
@@ -25,6 +26,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const token = payload.token?.trim() ?? '';
   const password = payload.password ?? '';
+  const deviceMac = payload.deviceMac?.trim() || getClientDeviceMac(request);
 
   if (!token) {
     return jsonError('Reset token is required.', 422);
@@ -37,7 +39,7 @@ export async function POST(request: Request): Promise<Response> {
 
   let ok = false;
   try {
-    ok = await socialStore.resetPassword(token, password, getClientIp(request));
+    ok = await socialStore.resetPassword(token, password, getClientIp(request), deviceMac);
   } catch (error) {
     return jsonError(error instanceof Error ? error.message : 'Password reset failed.', 403);
   }

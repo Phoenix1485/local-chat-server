@@ -1,4 +1,4 @@
-import { enforceSameOrigin, getClientIp, jsonError } from '@/lib/http';
+import { enforceSameOrigin, getClientDeviceMac, getClientIp, jsonError } from '@/lib/http';
 import { socialStore } from '@/lib/socialStore';
 import { validateEmail, validatePassword, validateUsername } from '@/lib/validation';
 
@@ -11,6 +11,7 @@ type RegisterPayload = {
   firstName?: string;
   lastName?: string;
   email?: string;
+  deviceMac?: string;
 };
 
 export async function POST(request: Request): Promise<Response> {
@@ -31,6 +32,7 @@ export async function POST(request: Request): Promise<Response> {
   const firstName = payload.firstName?.trim() ?? '';
   const lastName = payload.lastName?.trim() ?? '';
   const email = payload.email?.trim() ?? '';
+  const deviceMac = payload.deviceMac?.trim() || getClientDeviceMac(request);
 
   const usernameError = validateUsername(username);
   if (usernameError) {
@@ -59,7 +61,8 @@ export async function POST(request: Request): Promise<Response> {
       lastName,
       email: email || undefined,
       ip: getClientIp(request),
-      userAgent: request.headers.get('user-agent') ?? ''
+      userAgent: request.headers.get('user-agent') ?? '',
+      deviceMac
     });
 
     return Response.json({

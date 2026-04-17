@@ -15,6 +15,20 @@ export function getClientIp(request: Request): string {
   return 'unknown';
 }
 
+export function getClientDeviceMac(request: Request): string {
+  const direct = request.headers.get('x-device-mac')?.trim();
+  if (direct) {
+    return direct;
+  }
+
+  const alternate = request.headers.get('x-client-mac')?.trim();
+  if (alternate) {
+    return alternate;
+  }
+
+  return '';
+}
+
 export function isUuid(value: string): boolean {
   return UUID_REGEX.test(value);
 }

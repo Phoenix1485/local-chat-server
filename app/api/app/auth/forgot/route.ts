@@ -1,4 +1,4 @@
-import { enforceSameOrigin, getClientIp, jsonError } from '@/lib/http';
+import { enforceSameOrigin, getClientDeviceMac, getClientIp, jsonError } from '@/lib/http';
 import { socialStore } from '@/lib/socialStore';
 
 export const runtime = 'nodejs';
@@ -6,6 +6,7 @@ export const dynamic = 'force-dynamic';
 
 type ForgotPayload = {
   identifier?: string;
+  deviceMac?: string;
 };
 
 export async function POST(request: Request): Promise<Response> {
@@ -22,12 +23,13 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const identifier = payload.identifier?.trim() ?? '';
+  const deviceMac = payload.deviceMac?.trim() || getClientDeviceMac(request);
   if (!identifier) {
     return jsonError('Identifier is required.', 422);
   }
 
   try {
-    const resetToken = await socialStore.requestPasswordReset(identifier, getClientIp(request));
+    const resetToken = await socialStore.requestPasswordReset(identifier, getClientIp(request), deviceMac);
     return Response.json(
       {
         ok: true,

@@ -7,6 +7,7 @@ export const dynamic = 'force-dynamic';
 
 type CreateIpBlacklistPayload = {
   ip?: string;
+  mac?: string;
   note?: string | null;
   scope?: {
     forbidRegister?: boolean;
@@ -38,6 +39,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const ip = payload.ip?.trim() ?? '';
+  const mac = payload.mac?.trim() ?? '';
   const scope = {
     forbidRegister: payload.scope?.forbidRegister !== false,
     forbidLogin: payload.scope?.forbidLogin !== false,
@@ -46,12 +48,12 @@ export async function POST(request: Request): Promise<Response> {
     terminateSessions: payload.scope?.terminateSessions !== false
   };
 
-  if (!ip) {
-    return jsonError('IP is required.', 422);
+  if (!ip && !mac) {
+    return jsonError('IP or MAC is required.', 422);
   }
 
   try {
-    const entry = await socialStore.addIpBlacklistEntry(ip, scope, payload.note ?? null);
+    const entry = await socialStore.addIpBlacklistEntry(ip || null, mac || null, scope, payload.note ?? null);
     return Response.json({ entry });
   } catch (error) {
     return jsonError(error instanceof Error ? error.message : 'IP blacklist update failed.', 422);

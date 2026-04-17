@@ -119,7 +119,9 @@ export type AdminBlacklistEntry = {
 
 export type AdminIpBlacklistEntry = {
   id: string;
-  ip: string;
+  ip: string | null;
+  mac: string | null;
+  matchMode: 'ip' | 'mac' | 'ip_mac';
   note: string | null;
   scope: {
     forbidRegister: boolean;

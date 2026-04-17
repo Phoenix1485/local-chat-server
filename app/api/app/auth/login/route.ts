@@ -1,5 +1,5 @@
 import { createSessionCookie } from '@/lib/appAuth';
-import { enforceSameOrigin, getClientIp, jsonError } from '@/lib/http';
+import { enforceSameOrigin, getClientDeviceMac, getClientIp, jsonError } from '@/lib/http';
 import { socialStore } from '@/lib/socialStore';
 import { validatePassword } from '@/lib/validation';
 
@@ -9,6 +9,7 @@ export const dynamic = 'force-dynamic';
 type LoginPayload = {
   identifier?: string;
   password?: string;
+  deviceMac?: string;
 };
 
 export async function POST(request: Request): Promise<Response> {
@@ -26,6 +27,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const identifier = payload.identifier?.trim() ?? '';
   const password = payload.password ?? '';
+  const deviceMac = payload.deviceMac?.trim() || getClientDeviceMac(request);
 
   if (!identifier) {
     return jsonError('Identifier is required.', 422);
@@ -42,7 +44,8 @@ export async function POST(request: Request): Promise<Response> {
       identifier,
       password,
       userAgent: request.headers.get('user-agent') ?? '',
-      ip: getClientIp(request)
+      ip: getClientIp(request),
+      deviceMac
     });
   } catch (error) {
     return jsonError(error instanceof Error ? error.message : 'Login failed.', 403);
