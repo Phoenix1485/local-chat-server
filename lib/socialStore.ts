@@ -16,6 +16,8 @@ import { createSessionToken, hashPassword, hashToken, normalizeEmail, normalizeU
 import { normalizeName } from '@/lib/validation';
 import type {
   AppChatAttachment,
+  AppChatNotificationMode,
+  AppChatPreferences,
   AppBootstrap,
   AppChatContext,
   AppChatGif,
@@ -31,7 +33,9 @@ import type {
   AppModerationReportReason,
   AppModerationReportStatus,
   AppNicknameSlot,
+  AppDesktopNotificationMode,
   AppUserProfile,
+  AppUserPreferences,
   ChatBackgroundPreset,
   FriendRequestItem,
   GlobalRole,
@@ -92,6 +96,8 @@ type ChatSummaryRow = RowDataPacket & {
   last_message_text: string | null;
   unread_count: number;
   mention_count: number;
+  is_archived: number;
+  notification_mode: AppChatNotificationMode;
 };
 
 type GroupChatControlRow = RowDataPacket & {
@@ -296,6 +302,26 @@ type FriendRequestRow = RowDataPacket & {
 
 type ProfileWithFriendRow = FriendProfileRow & {
   is_friend: number;
+};
+
+type UserPreferencesRow = RowDataPacket & {
+  user_id: string;
+  desktop_notifications: AppDesktopNotificationMode;
+  play_mention_sound: number;
+  show_typing_indicators: number;
+  show_read_receipts: number;
+  expand_archived_chats: number;
+  created_at: number;
+  updated_at: number;
+};
+
+type ChatPreferenceRow = RowDataPacket & {
+  chat_id: string;
+  user_id: string;
+  is_archived: number;
+  notification_mode: AppChatNotificationMode;
+  created_at: number;
+  updated_at: number;
 };
 
 type NicknameSlotRow = RowDataPacket & {
@@ -605,6 +631,14 @@ function toGroupMentionPolicy(value: unknown): GroupMentionPolicy {
   return 'admins';
 }
 
+function toDesktopNotificationMode(value: unknown): AppDesktopNotificationMode {
+  return value === 'none' ? 'none' : 'mentions';
+}
+
+function toChatNotificationMode(value: unknown): AppChatNotificationMode {
+  return value === 'mute' ? 'mute' : 'mentions';
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -677,6 +711,37 @@ function mapProfile(
     chatBackground: toChatBackgroundPreset(row.chat_background),
     nicknameSlots: options?.nicknameSlots,
     isFriend: options?.isFriend
+  };
+}
+
+const DEFAULT_USER_PREFERENCES: AppUserPreferences = {
+  desktopNotifications: 'mentions',
+  playMentionSound: true,
+  showTypingIndicators: true,
+  showReadReceipts: true,
+  expandArchivedChats: false
+};
+
+function mapUserPreferences(row?: Partial<UserPreferencesRow> | null): AppUserPreferences {
+  if (!row) {
+    return { ...DEFAULT_USER_PREFERENCES };
+  }
+
+  return {
+    desktopNotifications: toDesktopNotificationMode(row.desktop_notifications),
+    playMentionSound: asNumber(row.play_mention_sound, DEFAULT_USER_PREFERENCES.playMentionSound ? 1 : 0) === 1,
+    showTypingIndicators: asNumber(row.show_typing_indicators, DEFAULT_USER_PREFERENCES.showTypingIndicators ? 1 : 0) === 1,
+    showReadReceipts: asNumber(row.show_read_receipts, DEFAULT_USER_PREFERENCES.showReadReceipts ? 1 : 0) === 1,
+    expandArchivedChats: asNumber(row.expand_archived_chats, DEFAULT_USER_PREFERENCES.expandArchivedChats ? 1 : 0) === 1
+  };
+}
+
+function mapChatPreferences(
+  row?: { is_archived?: number | null; notification_mode?: AppChatNotificationMode | null } | null
+): AppChatPreferences {
+  return {
+    archived: asNumber(row?.is_archived, 0) === 1,
+    notificationMode: toChatNotificationMode(row?.notification_mode)
   };
 }
 
@@ -1812,7 +1877,8 @@ export class SocialStore {
       canManageMembers,
       groupInviteMode: inviteMode,
       groupInvitePolicy: invitePolicy,
-      groupAutoHideAfter24h: autoHideAfter24h
+      groupAutoHideAfter24h: autoHideAfter24h,
+      preferences: mapChatPreferences(row)
     };
   }
 
@@ -1836,6 +1902,8 @@ export class SocialStore {
           c.group_here_mention_policy,
           c.group_invite_code,
           c.group_auto_hide_24h,
+          COALESCE(cmp.is_archived, 0) AS is_archived,
+          COALESCE(cmp.notification_mode, 'mentions') AS notification_mode,
           cm_user.member_role,
           COUNT(DISTINCT cm_all.user_id) AS members_count,
           MAX(m.created_at) AS last_message_at,
@@ -1885,6 +1953,9 @@ export class SocialStore {
         LEFT JOIN chat_reads cr
           ON cr.chat_id = c.id
          AND cr.user_id = cm_user.user_id
+        LEFT JOIN chat_member_preferences cmp
+          ON cmp.chat_id = c.id
+         AND cmp.user_id = cm_user.user_id
         WHERE c.deactivated_at IS NULL
         GROUP BY
           c.id,
@@ -1899,11 +1970,14 @@ export class SocialStore {
           c.group_here_mention_policy,
           c.group_invite_code,
           c.group_auto_hide_24h,
+          cmp.is_archived,
+          cmp.notification_mode,
           cm_user.user_id,
           cm_user.member_role,
           a_me.username
         ORDER BY
           c.chat_type = 'global' DESC,
+          COALESCE(cmp.is_archived, 0) ASC,
           COALESCE(MAX(m.created_at), c.updated_at) DESC,
           c.name ASC
       `,
@@ -1911,6 +1985,145 @@ export class SocialStore {
     );
 
     return rows.map((row) => this.mapChatSummary(row));
+  }
+
+  async getUserPreferences(userId: string): Promise<AppUserPreferences> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const [rows] = await pool.query<UserPreferencesRow[]>(
+      `
+        SELECT
+          user_id,
+          desktop_notifications,
+          play_mention_sound,
+          show_typing_indicators,
+          show_read_receipts,
+          expand_archived_chats,
+          created_at,
+          updated_at
+        FROM user_preferences
+        WHERE user_id = ?
+        LIMIT 1
+      `,
+      [userId]
+    );
+
+    return mapUserPreferences(rows[0] ?? null);
+  }
+
+  async updateUserPreferences(userId: string, input: Partial<AppUserPreferences>): Promise<AppUserPreferences> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const now = Date.now();
+    const current = await this.getUserPreferences(userId);
+    const next: AppUserPreferences = {
+      desktopNotifications: input.desktopNotifications ? toDesktopNotificationMode(input.desktopNotifications) : current.desktopNotifications,
+      playMentionSound: typeof input.playMentionSound === 'boolean' ? input.playMentionSound : current.playMentionSound,
+      showTypingIndicators: typeof input.showTypingIndicators === 'boolean' ? input.showTypingIndicators : current.showTypingIndicators,
+      showReadReceipts: typeof input.showReadReceipts === 'boolean' ? input.showReadReceipts : current.showReadReceipts,
+      expandArchivedChats: typeof input.expandArchivedChats === 'boolean' ? input.expandArchivedChats : current.expandArchivedChats
+    };
+
+    await pool.query<ResultSetHeader>(
+      `
+        INSERT INTO user_preferences (
+          user_id,
+          desktop_notifications,
+          play_mention_sound,
+          show_typing_indicators,
+          show_read_receipts,
+          expand_archived_chats,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          desktop_notifications = VALUES(desktop_notifications),
+          play_mention_sound = VALUES(play_mention_sound),
+          show_typing_indicators = VALUES(show_typing_indicators),
+          show_read_receipts = VALUES(show_read_receipts),
+          expand_archived_chats = VALUES(expand_archived_chats),
+          updated_at = VALUES(updated_at)
+      `,
+      [
+        userId,
+        next.desktopNotifications,
+        next.playMentionSound ? 1 : 0,
+        next.showTypingIndicators ? 1 : 0,
+        next.showReadReceipts ? 1 : 0,
+        next.expandArchivedChats ? 1 : 0,
+        now,
+        now
+      ]
+    );
+
+    return next;
+  }
+
+  async updateChatPreferences(
+    userId: string,
+    chatId: string,
+    input: {
+      archived?: boolean;
+      notificationMode?: AppChatNotificationMode;
+    }
+  ): Promise<AppChatSummary> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const now = Date.now();
+    const role = await this.getMembershipRole(userId, chatId);
+    if (!role) {
+      throw new Error('Chat not accessible.');
+    }
+
+    const [rows] = await pool.query<ChatPreferenceRow[]>(
+      `
+        SELECT
+          chat_id,
+          user_id,
+          is_archived,
+          notification_mode,
+          created_at,
+          updated_at
+        FROM chat_member_preferences
+        WHERE chat_id = ?
+          AND user_id = ?
+        LIMIT 1
+      `,
+      [chatId, userId]
+    );
+
+    const current = mapChatPreferences(rows[0] ?? null);
+    const next = {
+      archived: typeof input.archived === 'boolean' ? input.archived : current.archived,
+      notificationMode: input.notificationMode ? toChatNotificationMode(input.notificationMode) : current.notificationMode
+    };
+
+    await pool.query<ResultSetHeader>(
+      `
+        INSERT INTO chat_member_preferences (
+          chat_id,
+          user_id,
+          is_archived,
+          notification_mode,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          is_archived = VALUES(is_archived),
+          notification_mode = VALUES(notification_mode),
+          updated_at = VALUES(updated_at)
+      `,
+      [chatId, userId, next.archived ? 1 : 0, next.notificationMode, now, now]
+    );
+
+    const chats = await this.listChats(userId);
+    const chat = chats.find((item) => item.id === chatId);
+    if (!chat) {
+      throw new Error('Chat could not be loaded.');
+    }
+    return chat;
   }
 
   private async listFriends(userId: string): Promise<AppUserProfile[]> {
@@ -2391,18 +2604,24 @@ export class SocialStore {
       throw new Error('Account not found.');
     }
 
-    const [chats, friends, requests, nicknameSlots] = await Promise.all([
+    const [chats, friends, requests, nicknameSlots, preferences] = await Promise.all([
       this.listChats(userId),
       this.listFriends(userId),
       this.listFriendRequests(userId),
-      this.listNicknameSlots(userId)
+      this.listNicknameSlots(userId),
+      this.getUserPreferences(userId)
     ]);
     const globalNickname = nicknameSlots.find((slot) => slot.scope === 'global')?.nickname ?? undefined;
 
-    const activeChatId = chats.find((chat) => chat.id === requestedChatId)?.id ?? chats[0]?.id ?? null;
+    const activeChatId =
+      chats.find((chat) => chat.id === requestedChatId)?.id ??
+      chats.find((chat) => !chat.preferences.archived)?.id ??
+      chats[0]?.id ??
+      null;
 
     return {
       me: mapProfile(meAccount, { includeEmail: true, displayName: globalNickname, nicknameSlots }),
+      preferences,
       chats,
       activeChatId,
       friends,

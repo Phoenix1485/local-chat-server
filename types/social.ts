@@ -8,6 +8,10 @@ export type NicknameScope = 'global' | 'chat';
 
 export type ChatKind = 'global' | 'group' | 'direct';
 
+export type AppDesktopNotificationMode = 'mentions' | 'none';
+
+export type AppChatNotificationMode = 'mentions' | 'mute';
+
 export type GroupInviteMode = 'direct' | 'invite_link';
 
 export type GroupInvitePolicy = 'everyone' | 'admins' | 'owner';
@@ -39,6 +43,19 @@ export type AppNicknameSlot = {
   chatName: string | null;
 };
 
+export type AppUserPreferences = {
+  desktopNotifications: AppDesktopNotificationMode;
+  playMentionSound: boolean;
+  showTypingIndicators: boolean;
+  showReadReceipts: boolean;
+  expandArchivedChats: boolean;
+};
+
+export type AppChatPreferences = {
+  archived: boolean;
+  notificationMode: AppChatNotificationMode;
+};
+
 export type FriendRequestState = 'pending' | 'accepted' | 'declined' | 'cancelled';
 
 export type FriendRequestItem = {
@@ -68,6 +85,7 @@ export type AppChatSummary = {
   groupInviteMode: GroupInviteMode | null;
   groupInvitePolicy: GroupInvitePolicy | null;
   groupAutoHideAfter24h: boolean;
+  preferences: AppChatPreferences;
 };
 
 export type AppChatMember = {
@@ -225,6 +243,7 @@ export type AppGroupSettings = {
 
 export type AppBootstrap = {
   me: AppUserProfile;
+  preferences: AppUserPreferences;
   chats: AppChatSummary[];
   activeChatId: string | null;
   friends: AppUserProfile[];

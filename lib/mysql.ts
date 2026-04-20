@@ -225,6 +225,21 @@ async function createSchema(): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS chat_member_preferences (
+      chat_id CHAR(36) NOT NULL,
+      user_id CHAR(36) NOT NULL,
+      is_archived TINYINT(1) NOT NULL DEFAULT 0,
+      notification_mode ENUM('mentions','mute') NOT NULL DEFAULT 'mentions',
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      PRIMARY KEY (chat_id, user_id),
+      INDEX idx_chat_member_preferences_user_archived (user_id, is_archived, updated_at),
+      CONSTRAINT fk_chat_member_preferences_chat FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+      CONSTRAINT fk_chat_member_preferences_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS group_moderation_logs (
       id CHAR(36) PRIMARY KEY,
       chat_id CHAR(36) NOT NULL,
@@ -322,6 +337,20 @@ async function createSchema(): Promise<void> {
       UNIQUE KEY uq_auth_accounts_email_norm (email_norm),
       INDEX idx_auth_accounts_global_role (global_role),
       CONSTRAINT fk_auth_accounts_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_preferences (
+      user_id CHAR(36) PRIMARY KEY,
+      desktop_notifications ENUM('mentions','none') NOT NULL DEFAULT 'mentions',
+      play_mention_sound TINYINT(1) NOT NULL DEFAULT 1,
+      show_typing_indicators TINYINT(1) NOT NULL DEFAULT 1,
+      show_read_receipts TINYINT(1) NOT NULL DEFAULT 1,
+      expand_archived_chats TINYINT(1) NOT NULL DEFAULT 0,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      CONSTRAINT fk_user_preferences_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
   `);
 

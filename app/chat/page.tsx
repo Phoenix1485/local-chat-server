@@ -9,6 +9,7 @@ import { createPortal } from 'react-dom';
 import type {
   AppBootstrap,
   AppChatAttachment,
+  AppChatNotificationMode,
   AppChatContext,
   AppChatGif,
   AppChatMessage,
@@ -18,6 +19,7 @@ import type {
   AppModerationReport,
   AppModerationReportReason,
   AppModerationReportStatus,
+  AppUserPreferences,
   AppUserProfile,
   ChatBackgroundPreset,
   GlobalRole,
@@ -30,6 +32,14 @@ import type {
 const TOKEN_KEY = 'chat_auth_token';
 const SAVED_GIFS_KEY = 'chat_saved_gifs_v1';
 const GIF_SAVED_CATEGORY = '__saved__';
+
+const DEFAULT_CHAT_PAGE_PREFERENCES: AppUserPreferences = {
+  desktopNotifications: 'mentions',
+  playMentionSound: true,
+  showTypingIndicators: true,
+  showReadReceipts: true,
+  expandArchivedChats: false
+};
 
 function initials(user: Pick<AppUserProfile, 'firstName' | 'lastName' | 'username'>): string {
   const a = user.firstName?.[0] ?? '';
@@ -422,6 +432,10 @@ function themeLabel(preset?: ChatBackgroundPreset): string {
   return 'Aurora';
 }
 
+function chatNotificationModeLabel(mode: AppChatNotificationMode): string {
+  return mode === 'mute' ? 'Stumm' : 'Erwähnungen';
+}
+
 function Avatar({ user, size = 34, sessionToken }: { user: AppUserProfile; size?: number; sessionToken?: string }) {
   const [failed, setFailed] = useState(false);
   const accent = user.accentColor ?? '#38bdf8';
@@ -684,6 +698,7 @@ export default function ChatPage() {
   const chats = bootstrap?.chats ?? [];
   const me = bootstrap?.me ?? null;
   const activeChat = chats.find((chat) => chat.id === activeChatId) ?? null;
+  const userPreferences = bootstrap?.preferences ?? DEFAULT_CHAT_PAGE_PREFERENCES;
   const activeChatName = activeChat?.name ?? context?.chat.name ?? 'Chat';
   const members = context?.members ?? [];
   const onlineMembersCount = members.filter((member) => member.isOnline).length;
@@ -693,6 +708,10 @@ export default function ChatPage() {
   const activeProfileMember =
     profileCard && context?.chat.kind === 'group' ? members.find((member) => member.user.id === profileCard.id) ?? null : null;
   const appOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+  const activeChats = chats.filter((chat) => !chat.preferences.archived);
+  const archivedChats = chats.filter((chat) => chat.preferences.archived);
+  const archivedSectionExpanded = userPreferences.expandArchivedChats || Boolean(activeChat?.preferences.archived);
+  const railChats = chats.filter((chat) => !chat.preferences.archived || chat.id === activeChatId);
 
   const discoverCandidates = useMemo(
     () => discoverUsers.filter((user) => !members.some((member) => member.user.id === user.id)),
@@ -977,6 +996,9 @@ export default function ChatPage() {
   }, [showGroupManageModal, showGroupModal, showGifModal, showPollModal, showShortcutModal, deleteTarget, profileCard]);
 
   useEffect(() => {
+    if (!bootstrap) {
+      return;
+    }
     if (typeof window === 'undefined' || !('Notification' in window)) {
       setShowMentionNotificationPrompt(false);
       return;
@@ -985,8 +1007,12 @@ export default function ChatPage() {
     const permission = Notification.permission;
     setNotificationPermission(permission);
     const dismissed = localStorage.getItem('chat_mentions_notification_prompt_dismissed') === '1';
-    setShowMentionNotificationPrompt(permission === 'default' && !dismissed);
-  }, []);
+    setShowMentionNotificationPrompt(
+      userPreferences.desktopNotifications !== 'none' &&
+      permission === 'default' &&
+      !dismissed
+    );
+  }, [bootstrap, userPreferences.desktopNotifications]);
 
   useEffect(() => {
     const syncConnection = () => {
@@ -1209,7 +1235,19 @@ export default function ChatPage() {
       typingActiveRef.current = false;
       setTypingUsers([]);
     };
-  }, [activeChatId, router, token, me?.id, me?.username, me?.fullName, activeChatName, notificationPermission]);
+  }, [
+    activeChatId,
+    router,
+    token,
+    me?.id,
+    me?.username,
+    me?.fullName,
+    activeChatName,
+    notificationPermission,
+    activeChat?.preferences.notificationMode,
+    userPreferences.desktopNotifications,
+    userPreferences.playMentionSound
+  ]);
 
   useEffect(() => {
     const list = messageListRef.current;
@@ -2588,7 +2626,70 @@ export default function ChatPage() {
     }
   };
 
+  const updateUserPreferences = async (
+    updates: Partial<AppUserPreferences>,
+    successMessage?: string
+  ) => {
+    if (!token) {
+      return;
+    }
+
+    setIsBusy(true);
+    setError(null);
+    try {
+      const payload = (await api('/api/app/preferences', token, {
+        method: 'PATCH',
+        body: JSON.stringify(updates)
+      })) as { preferences: AppUserPreferences };
+
+      setBootstrap((prev) => (prev ? { ...prev, preferences: payload.preferences } : prev));
+      if (successMessage) {
+        setInfo(successMessage);
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Einstellungen konnten nicht aktualisiert werden.');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const updateChatPreferences = async (
+    updates: {
+      archived?: boolean;
+      notificationMode?: AppChatNotificationMode;
+    },
+    successMessage?: string
+  ) => {
+    if (!token || !activeChatId) {
+      return;
+    }
+
+    setIsBusy(true);
+    setError(null);
+    try {
+      await api('/api/app/chats/preferences', token, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          chatId: activeChatId,
+          ...updates
+        })
+      });
+      await loadBootstrap(token, activeChatId);
+      await loadContext(token, activeChatId);
+      if (successMessage) {
+        setInfo(successMessage);
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Chat-Einstellungen konnten nicht aktualisiert werden.');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
   const playMentionTone = () => {
+    if (!userPreferences.playMentionSound) {
+      return;
+    }
     if (typeof window === 'undefined') {
       return;
     }
@@ -2651,6 +2752,12 @@ export default function ChatPage() {
 
   const pushMentionNotification = (message: AppChatMessage, chatName: string) => {
     if (typeof window === 'undefined' || !('Notification' in window)) {
+      return;
+    }
+    if (userPreferences.desktopNotifications === 'none') {
+      return;
+    }
+    if (activeChat?.preferences.notificationMode === 'mute') {
       return;
     }
     if (notificationPermission !== 'granted') {
@@ -2744,7 +2851,7 @@ export default function ChatPage() {
           <motion.button whileHover={{ scale: 1.07, y: -1 }} whileTap={{ scale: 0.96 }} className="server-pill active" onClick={() => void selectChat(activeChatId ?? chats[0]?.id ?? '')}>
             {initials(me)}
           </motion.button>
-          {chats.map((chat) => (
+          {railChats.map((chat) => (
             <motion.button
               key={chat.id}
               whileHover={{ scale: 1.07, y: -1 }}
@@ -2805,34 +2912,114 @@ export default function ChatPage() {
               </button>
             </div>
 
-            <ul className="space-y-1.5">
-              {chats.map((chat) => (
-                <li key={chat.id}>
-                  <motion.button
-                    whileHover={{ x: 3 }}
-                    whileTap={{ scale: 0.985 }}
-                    className={`channel-row ${chat.id === activeChatId ? 'active' : ''} ${chat.unreadCount > 0 ? 'has-unread' : ''}`}
-                    onClick={() => void selectChat(chat.id)}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-sm font-medium text-slate-100">
-                        {chat.kind === 'group' ? '#' : ''}
-                        {chat.name}
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        <span className="surface-muted text-[10px] uppercase">{chat.kind}</span>
-                        {chat.mentionCount > 0 ? (
-                          <span className="mention-badge">{chat.mentionCount > 99 ? '99+' : chat.mentionCount}</span>
-                        ) : null}
-                        {chat.unreadCount > 0 ? (
-                          <span className="unread-badge">{chat.unreadCount > 99 ? '99+' : chat.unreadCount}</span>
-                        ) : null}
-                      </div>
-                    </div>
-                  </motion.button>
-                </li>
-              ))}
-            </ul>
+            <div className="space-y-3">
+              <div>
+                <p className="surface-muted mb-2 text-[11px] uppercase tracking-wide">Aktiv ({activeChats.length})</p>
+                <ul className="space-y-1.5">
+                  {activeChats.map((chat) => (
+                    <li key={chat.id}>
+                      <motion.button
+                        whileHover={{ x: 3 }}
+                        whileTap={{ scale: 0.985 }}
+                        className={`channel-row ${chat.id === activeChatId ? 'active' : ''} ${chat.unreadCount > 0 ? 'has-unread' : ''}`}
+                        onClick={() => void selectChat(chat.id)}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate text-sm font-medium text-slate-100">
+                            {chat.kind === 'group' ? '#' : ''}
+                            {chat.name}
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span className="surface-muted text-[10px] uppercase">{chat.kind}</span>
+                            {chat.preferences.notificationMode === 'mute' ? (
+                              <span className="rounded-full border border-slate-700/70 bg-slate-950/55 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300">
+                                stumm
+                              </span>
+                            ) : null}
+                            {chat.mentionCount > 0 ? (
+                              <span className="mention-badge">{chat.mentionCount > 99 ? '99+' : chat.mentionCount}</span>
+                            ) : null}
+                            {chat.unreadCount > 0 ? (
+                              <span className="unread-badge">{chat.unreadCount > 99 ? '99+' : chat.unreadCount}</span>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-400">
+                          <span className="truncate">
+                            {chat.lastMessageText?.trim() ? chat.lastMessageText : 'Noch keine Vorschau vorhanden.'}
+                          </span>
+                        </div>
+                      </motion.button>
+                    </li>
+                  ))}
+                  {activeChats.length === 0 ? <li className="surface-muted text-xs">Keine aktiven Chats.</li> : null}
+                </ul>
+              </div>
+
+              {archivedChats.length > 0 ? (
+                <div className="rounded-xl border border-slate-800/80 bg-slate-950/25 p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="surface-muted text-[11px] uppercase tracking-wide">Archiv ({archivedChats.length})</p>
+                    <button
+                      className="btn-soft px-2 py-1 text-[11px]"
+                      type="button"
+                      onClick={() =>
+                        void updateUserPreferences(
+                          { expandArchivedChats: !userPreferences.expandArchivedChats },
+                          userPreferences.expandArchivedChats ? 'Archiv eingeklappt.' : 'Archiv aufgeklappt.'
+                        )
+                      }
+                    >
+                      {archivedSectionExpanded ? 'Einklappen' : 'Anzeigen'}
+                    </button>
+                  </div>
+                  {archivedSectionExpanded ? (
+                    <ul className="mt-2 space-y-1.5">
+                      {archivedChats.map((chat) => (
+                        <li key={chat.id}>
+                          <motion.button
+                            whileHover={{ x: 3 }}
+                            whileTap={{ scale: 0.985 }}
+                            className={`channel-row ${chat.id === activeChatId ? 'active' : ''} ${chat.unreadCount > 0 ? 'has-unread' : ''}`}
+                            onClick={() => void selectChat(chat.id)}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="truncate text-sm font-medium text-slate-100">
+                                {chat.kind === 'group' ? '#' : ''}
+                                {chat.name}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="rounded-full border border-slate-700/70 bg-slate-950/55 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300">
+                                  archiv
+                                </span>
+                                {chat.preferences.notificationMode === 'mute' ? (
+                                  <span className="rounded-full border border-slate-700/70 bg-slate-950/55 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300">
+                                    stumm
+                                  </span>
+                                ) : null}
+                                {chat.mentionCount > 0 ? (
+                                  <span className="mention-badge">{chat.mentionCount > 99 ? '99+' : chat.mentionCount}</span>
+                                ) : null}
+                                {chat.unreadCount > 0 ? (
+                                  <span className="unread-badge">{chat.unreadCount > 99 ? '99+' : chat.unreadCount}</span>
+                                ) : null}
+                              </div>
+                            </div>
+                            <div className="mt-1 text-[11px] text-slate-400">
+                              <span className="truncate">
+                                {chat.lastMessageText?.trim() ? chat.lastMessageText : 'Archiviert ohne Vorschau.'}
+                              </span>
+                            </div>
+                          </motion.button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="surface-muted mt-2 text-xs">Archivierte Chats bleiben aus dem Weg, bis du sie brauchst.</p>
+                  )}
+                </div>
+              ) : null}
+            </div>
 
             <div className="mt-3 rounded-lg border border-slate-600/60 bg-slate-900/55 p-2">
               <p className="surface-muted text-[11px] uppercase tracking-wide">Mit Einladungs-Code beitreten</p>
@@ -2869,9 +3056,41 @@ export default function ChatPage() {
               )}
               <p className="surface-muted text-xs uppercase tracking-wide">
                 {activeChat?.kind ?? context?.chat.kind ?? 'chat'} · {members.length} Mitglieder · {onlineMembersCount} online
+                {activeChat?.preferences.archived ? ' · archiviert' : ''}
+                {activeChat?.preferences.notificationMode === 'mute' ? ' · stumm' : ''}
               </p>
             </div>
             <div className="hidden items-center gap-2 text-xs text-slate-300 sm:flex">
+              {activeChat ? (
+                <button
+                  className="btn-soft px-2 py-1 text-xs"
+                  onClick={() =>
+                    void updateChatPreferences(
+                      {
+                        notificationMode: activeChat.preferences.notificationMode === 'mute' ? 'mentions' : 'mute'
+                      },
+                      activeChat.preferences.notificationMode === 'mute' ? 'Chat wieder auf Erwähnungen gestellt.' : 'Chat stummgeschaltet.'
+                    )
+                  }
+                >
+                  {activeChat.preferences.notificationMode === 'mute' ? 'Erwähnungen an' : 'Stumm'}
+                </button>
+              ) : null}
+              {activeChat ? (
+                <button
+                  className="btn-soft px-2 py-1 text-xs"
+                  onClick={() =>
+                    void updateChatPreferences(
+                      {
+                        archived: !activeChat.preferences.archived
+                      },
+                      activeChat.preferences.archived ? 'Chat aus dem Archiv geholt.' : 'Chat archiviert.'
+                    )
+                  }
+                >
+                  {activeChat.preferences.archived ? 'Aus Archiv holen' : 'Archivieren'}
+                </button>
+              ) : null}
               <button className="btn-soft px-2 py-1 text-xs" onClick={() => setShowShortcutModal(true)}>
                 ? Shortcuts
               </button>
@@ -3158,19 +3377,23 @@ export default function ChatPage() {
 
                       {isMe && !message.deletedForAll && isGroupChat ? (
                         hasReaders ? (
-                          <div className="msg-read-group">
-                            <span className="msg-read-label">Gelesen von</span>
-                            <div className="msg-read-chips">
-                              {message.readBy.slice(-10).map((receipt) => (
-                                <span key={`${message.id}-${receipt.userId}-${receipt.readAt}`} className="msg-read-chip">
-                                  <Avatar user={receiptAvatarUser(receipt)} size={18} sessionToken={token} />
-                                  <span className="msg-read-tooltip">
-                                    {receipt.fullName} · {formatTime(receipt.readAt)}
+                          userPreferences.showReadReceipts ? (
+                            <div className="msg-read-group">
+                              <span className="msg-read-label">Gelesen von</span>
+                              <div className="msg-read-chips">
+                                {message.readBy.slice(-10).map((receipt) => (
+                                  <span key={`${message.id}-${receipt.userId}-${receipt.readAt}`} className="msg-read-chip">
+                                    <Avatar user={receiptAvatarUser(receipt)} size={18} sessionToken={token} />
+                                    <span className="msg-read-tooltip">
+                                      {receipt.fullName} · {formatTime(receipt.readAt)}
+                                    </span>
                                   </span>
-                                </span>
-                              ))}
+                                ))}
+                              </div>
                             </div>
-                          </div>
+                          ) : (
+                            <p className="msg-read-direct">Gesendet</p>
+                          )
                         ) : (
                           <p className="msg-read-direct">Gesendet</p>
                         )
@@ -3178,7 +3401,7 @@ export default function ChatPage() {
 
                       {isMe && !message.deletedForAll && isDirectChat ? (
                         <p className="msg-read-direct">
-                          {latestReadAt ? 'Gelesen' : 'Gesendet'}
+                          {userPreferences.showReadReceipts && latestReadAt ? 'Gelesen' : 'Gesendet'}
                         </p>
                       ) : null}
                     </motion.div>
@@ -3192,7 +3415,7 @@ export default function ChatPage() {
           </motion.div>
 
           <motion.div className="min-h-6 px-4 pb-1 text-xs text-slate-300" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.22 }}>
-            {typingUsers.length > 0 ? (
+            {userPreferences.showTypingIndicators && typingUsers.length > 0 ? (
               <motion.span className="typing-indicator" initial={{ opacity: 0.55 }} animate={{ opacity: 1 }}>
                 {typingUsers.slice(0, 3).map((user) => user.fullName).join(', ')}
                 {typingUsers.length > 1 ? ' tippen...' : ' tippt...'}
@@ -3411,6 +3634,80 @@ export default function ChatPage() {
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.36, delay: 0.2 }}
         >
+          {activeChat ? (
+            <section className="mb-4">
+              <div className="glass-card rounded-xl p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-semibold text-slate-100">Chat-Setup</h2>
+                    <p className="surface-muted mt-1 text-xs">Pro Chat steuerbar: Hinweise, Archiv und Sidebar-Verhalten.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 text-[10px] uppercase">
+                    {activeChat.preferences.archived ? (
+                      <span className="rounded-full border border-slate-700/70 bg-slate-950/55 px-2 py-1 font-semibold text-slate-300">
+                        Archiviert
+                      </span>
+                    ) : null}
+                    <span className="rounded-full border border-slate-700/70 bg-slate-950/55 px-2 py-1 font-semibold text-slate-300">
+                      {chatNotificationModeLabel(activeChat.preferences.notificationMode)}
+                    </span>
+                  </div>
+                </div>
+
+                <label className="mt-3 block">
+                  <span className="surface-muted mb-1 block text-[11px] uppercase tracking-wide">Hinweise für diesen Chat</span>
+                  <select
+                    className="glass-input text-sm"
+                    value={activeChat.preferences.notificationMode}
+                    onChange={(event) =>
+                      void updateChatPreferences(
+                        { notificationMode: event.target.value as AppChatNotificationMode },
+                        'Chat-Hinweise aktualisiert.'
+                      )
+                    }
+                    disabled={isBusy}
+                  >
+                    <option value="mentions">Nur Erwähnungen</option>
+                    <option value="mute">Komplett stumm</option>
+                  </select>
+                </label>
+
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <button
+                    className="btn-soft text-xs"
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() =>
+                      void updateChatPreferences(
+                        { archived: !activeChat.preferences.archived },
+                        activeChat.preferences.archived ? 'Chat aus dem Archiv geholt.' : 'Chat archiviert.'
+                      )
+                    }
+                  >
+                    {activeChat.preferences.archived ? 'Aus Archiv holen' : 'Archivieren'}
+                  </button>
+                  <button
+                    className="btn-soft text-xs"
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() =>
+                      void updateUserPreferences(
+                        { expandArchivedChats: !userPreferences.expandArchivedChats },
+                        userPreferences.expandArchivedChats ? 'Archiv eingeklappt.' : 'Archiv aufgeklappt.'
+                      )
+                    }
+                  >
+                    {archivedSectionExpanded ? 'Archiv einklappen' : 'Archiv anzeigen'}
+                  </button>
+                </div>
+
+                <p className="surface-muted mt-3 text-[11px]">
+                  Global: Desktop {userPreferences.desktopNotifications === 'none' ? 'aus' : 'für Erwähnungen an'} · Sound {userPreferences.playMentionSound ? 'an' : 'aus'}
+                </p>
+              </div>
+            </section>
+          ) : null}
+
           <section>
             <h2 className="surface-muted text-xs font-semibold uppercase tracking-wide">Mitglieder ({members.length})</h2>
             <ul className="mt-2 max-h-52 space-y-1.5 overflow-y-auto">

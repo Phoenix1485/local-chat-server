@@ -3,7 +3,16 @@
 import Link from 'next/link';
 import { CSSProperties, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { AppBootstrap, AppNicknameSlot, AppUserProfile, ChatBackgroundPreset, GlobalRole, NicknameScope } from '@/types/social';
+import type {
+  AppBootstrap,
+  AppDesktopNotificationMode,
+  AppNicknameSlot,
+  AppUserPreferences,
+  AppUserProfile,
+  ChatBackgroundPreset,
+  GlobalRole,
+  NicknameScope
+} from '@/types/social';
 
 const TOKEN_KEY = 'chat_auth_token';
 type ProfileWorkspaceTab = 'account' | 'social' | 'discover';
@@ -16,6 +25,14 @@ const BACKGROUND_PRESETS: Array<{ value: ChatBackgroundPreset; label: string }> 
   { value: 'forest', label: 'Forest' },
   { value: 'paper', label: 'Paper' }
 ];
+
+const DEFAULT_USER_PREFERENCES: AppUserPreferences = {
+  desktopNotifications: 'mentions',
+  playMentionSound: true,
+  showTypingIndicators: true,
+  showReadReceipts: true,
+  expandArchivedChats: false
+};
 
 function hexToRgba(hex: string | undefined, alpha: number): string {
   const normalized = (hex ?? '').trim();
@@ -238,6 +255,11 @@ export default function ProfilePage() {
   const [nicknameSlots, setNicknameSlots] = useState<Array<{ id?: string; nickname: string; scope: NicknameScope; chatId: string | null }>>([
     { nickname: '', scope: 'global', chatId: null }
   ]);
+  const [desktopNotifications, setDesktopNotifications] = useState<AppDesktopNotificationMode>('mentions');
+  const [playMentionSound, setPlayMentionSound] = useState(true);
+  const [showTypingIndicators, setShowTypingIndicators] = useState(true);
+  const [showReadReceipts, setShowReadReceipts] = useState(true);
+  const [expandArchivedChats, setExpandArchivedChats] = useState(false);
   const [activeTab, setActiveTab] = useState<ProfileWorkspaceTab>('account');
   const [activeSocialTab, setActiveSocialTab] = useState<SocialWorkspaceTab>('friends');
   const [avatarEditorOpen, setAvatarEditorOpen] = useState(false);
@@ -293,6 +315,12 @@ export default function ProfilePage() {
       setProfileEmail(payload.me.email ?? '');
       setProfileAccentColor(payload.me.accentColor ?? '#38bdf8');
       setProfileChatBackground(payload.me.chatBackground ?? 'aurora');
+      const preferences = payload.preferences ?? DEFAULT_USER_PREFERENCES;
+      setDesktopNotifications(preferences.desktopNotifications);
+      setPlayMentionSound(preferences.playMentionSound);
+      setShowTypingIndicators(preferences.showTypingIndicators);
+      setShowReadReceipts(preferences.showReadReceipts);
+      setExpandArchivedChats(preferences.expandArchivedChats);
       setNicknameSlots(
         (payload.me.nicknameSlots?.length
           ? payload.me.nicknameSlots
@@ -399,30 +427,50 @@ export default function ProfilePage() {
     setInfo(null);
 
     try {
-      const payload = (await api('/api/app/profile/me', token, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          firstName: profileFirstName,
-          lastName: profileLastName,
-          bio: profileBio,
-          email: profileEmail,
-          accentColor: profileAccentColor,
-          chatBackground: profileChatBackground,
-          nicknameSlots: nicknameSlots
-            .map((slot) => ({
-              id: slot.id ?? null,
-              nickname: slot.nickname.trim(),
-              scope: slot.scope,
-              chatId: slot.scope === 'chat' ? slot.chatId : null
-            }))
-            .filter((slot) => slot.nickname.length > 0)
+      const [profilePayload, preferencesPayload] = (await Promise.all([
+        api('/api/app/profile/me', token, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            firstName: profileFirstName,
+            lastName: profileLastName,
+            bio: profileBio,
+            email: profileEmail,
+            accentColor: profileAccentColor,
+            chatBackground: profileChatBackground,
+            nicknameSlots: nicknameSlots
+              .map((slot) => ({
+                id: slot.id ?? null,
+                nickname: slot.nickname.trim(),
+                scope: slot.scope,
+                chatId: slot.scope === 'chat' ? slot.chatId : null
+              }))
+              .filter((slot) => slot.nickname.length > 0)
+          })
+        }),
+        api('/api/app/preferences', token, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            desktopNotifications,
+            playMentionSound,
+            showTypingIndicators,
+            showReadReceipts,
+            expandArchivedChats
+          })
         })
-      })) as { profile: AppUserProfile };
+      ])) as [{ profile: AppUserProfile }, { preferences: AppUserPreferences }];
 
-      setBootstrap((prev) => (prev ? { ...prev, me: payload.profile } : prev));
-      setInfo('Profil gespeichert.');
+      setBootstrap((prev) => (
+        prev
+          ? {
+              ...prev,
+              me: profilePayload.profile,
+              preferences: preferencesPayload.preferences
+            }
+          : prev
+      ));
+      setInfo('Profil und Chat-Einstellungen gespeichert.');
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Profilupdate fehlgeschlagen.');
+      setError(requestError instanceof Error ? requestError.message : 'Speichern fehlgeschlagen.');
     } finally {
       setIsBusy(false);
     }
@@ -962,6 +1010,105 @@ export default function ProfilePage() {
                   </div>
 
                   <div className="glass-panel rounded-[1.5rem] p-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h2 className="text-base font-semibold text-slate-100">Chat Experience</h2>
+                        <p className="surface-muted mt-1 text-sm">Steuert Hinweise, Archiv und die Informationsdichte deiner Chat-Oberfläche.</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2 text-[11px]">
+                        <span
+                          className="rounded-full border px-2 py-1 font-semibold"
+                          style={{
+                            borderColor: hexToRgba(profileAccentColor, 0.32),
+                            background: hexToRgba(profileAccentColor, 0.12),
+                            color: profileAccentColor
+                          }}
+                        >
+                          {desktopNotifications === 'none' ? 'Desktop aus' : 'Desktop an'}
+                        </span>
+                        <span className="rounded-full border border-slate-700/70 bg-slate-950/45 px-2 py-1 font-semibold text-slate-200">
+                          Archiv {expandArchivedChats ? 'offen' : 'kompakt'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <label className="mt-4 block">
+                      <span className="surface-muted mb-1 block text-xs uppercase tracking-wide">Desktop-Benachrichtigungen</span>
+                      <select
+                        className="glass-input text-sm"
+                        value={desktopNotifications}
+                        onChange={(event) => setDesktopNotifications(event.target.value as AppDesktopNotificationMode)}
+                      >
+                        <option value="mentions">Nur bei Erwähnungen</option>
+                        <option value="none">Komplett aus</option>
+                      </select>
+                    </label>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      {[
+                        {
+                          id: 'sound',
+                          title: 'Mention-Sound',
+                          description: 'Spielt beim Hinweis einen kurzen Ton ab.',
+                          enabled: playMentionSound,
+                          onToggle: () => setPlayMentionSound((prev) => !prev)
+                        },
+                        {
+                          id: 'typing',
+                          title: 'Tipp-Indikatoren',
+                          description: 'Zeigt an, wenn andere gerade schreiben.',
+                          enabled: showTypingIndicators,
+                          onToggle: () => setShowTypingIndicators((prev) => !prev)
+                        },
+                        {
+                          id: 'receipts',
+                          title: 'Lesebestätigungen',
+                          description: 'Blendet Read-Receipts in der Oberfläche ein.',
+                          enabled: showReadReceipts,
+                          onToggle: () => setShowReadReceipts((prev) => !prev)
+                        },
+                        {
+                          id: 'archive',
+                          title: 'Archiv standardmäßig öffnen',
+                          description: 'Archivierte Chats in der Sidebar automatisch ausklappen.',
+                          enabled: expandArchivedChats,
+                          onToggle: () => setExpandArchivedChats((prev) => !prev)
+                        }
+                      ].map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className="rounded-[1.2rem] border p-4 text-left transition"
+                          style={{
+                            borderColor: item.enabled ? hexToRgba(profileAccentColor, 0.42) : 'rgba(71, 85, 105, 0.46)',
+                            background: item.enabled
+                              ? `linear-gradient(135deg, ${hexToRgba(profileAccentColor, 0.16)}, rgba(15, 23, 42, 0.84))`
+                              : 'rgba(2, 6, 23, 0.32)'
+                          }}
+                          onClick={item.onToggle}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold text-slate-100">{item.title}</p>
+                              <p className="surface-muted mt-1 text-xs">{item.description}</p>
+                            </div>
+                            <span
+                              className="rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-wide"
+                              style={{
+                                borderColor: item.enabled ? hexToRgba(profileAccentColor, 0.34) : 'rgba(148, 163, 184, 0.24)',
+                                background: item.enabled ? hexToRgba(profileAccentColor, 0.16) : 'rgba(15, 23, 42, 0.42)',
+                                color: item.enabled ? profileAccentColor : '#cbd5e1'
+                              }}
+                            >
+                              {item.enabled ? 'An' : 'Aus'}
+                            </span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="glass-panel rounded-[1.5rem] p-5">
                     <h2 className="text-base font-semibold text-slate-100">Avatar & Save</h2>
                     <p className="surface-muted mt-1 text-sm">Bild austauschen, zuschneiden und Änderungen gesammelt speichern.</p>
 
@@ -982,7 +1129,7 @@ export default function ProfilePage() {
                     />
 
                     <button disabled={isBusy} className="btn-primary mt-4 w-full text-sm" onClick={() => void saveProfile()}>
-                      {isBusy ? 'Speichere...' : 'Profil speichern'}
+                      {isBusy ? 'Speichere...' : 'Alles speichern'}
                     </button>
                   </div>
                 </div>
@@ -1176,7 +1323,7 @@ export default function ProfilePage() {
                       Zu Freunde & Anfragen
                     </button>
                     <button className="btn-primary w-full text-sm" type="button" disabled={isBusy} onClick={() => void saveProfile()}>
-                      {isBusy ? 'Speichere...' : 'Aktuelle Änderungen speichern'}
+                      {isBusy ? 'Speichere...' : 'Profil + Settings speichern'}
                     </button>
                   </div>
                 </div>

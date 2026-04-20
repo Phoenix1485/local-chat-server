@@ -54,14 +54,14 @@ export const CLEAR_SESSION_COOKIE =
 
 export async function requireSession(request: Request): Promise<
   | {
-      ok: true;
-      session: UserSessionContext;
-      token: string;
-    }
+    ok: true;
+    session: UserSessionContext;
+    token: string;
+  }
   | {
-      ok: false;
-      response: Response;
-    }
+    ok: false;
+    response: Response;
+  }
 > {
   const token = readSessionToken(request);
   if (!token) {
