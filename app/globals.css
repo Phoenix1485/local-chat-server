@@ -71,6 +71,76 @@ select:focus-visible {
 
 .app-shell {
   min-height: 0;
+  height: 100%;
+}
+
+.app-layout-shell {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+  transition: grid-template-columns 180ms var(--ease-discord);
+}
+
+.app-layout-shell.sidebar-collapsed {
+  grid-template-columns: 4.25rem minmax(0, 1fr);
+}
+
+.app-sidebar {
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  border-right: 1px solid rgba(177, 191, 214, 0.18);
+  background:
+    radial-gradient(24rem 20rem at -20% 0%, rgba(98, 125, 255, 0.17), rgba(98, 125, 255, 0)),
+    linear-gradient(180deg, rgba(12, 20, 33, 0.92), rgba(9, 15, 25, 0.94));
+  backdrop-filter: blur(18px) saturate(145%);
+  padding: 1.05rem 0.9rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.95rem;
+  overflow: hidden;
+}
+
+.app-sidebar-subtitle {
+  color: #a9b7cb;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+
+.app-sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.sidebar-toggle {
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 0.62rem;
+  border: 1px solid rgba(177, 191, 214, 0.28);
+  background: rgba(42, 55, 78, 0.86);
+  color: #dbe7fb;
+  font-size: 1rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.app-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.48rem;
+  overflow: auto;
+  padding-right: 0.1rem;
+}
+
+.app-main-area {
+  min-width: 0;
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 body.chat-no-scroll {
@@ -188,7 +258,7 @@ body::before {
     position: sticky;
     top: 0;
     z-index: 70;
-    margin-bottom: 1.1rem;
+    margin-bottom: 0;
     backdrop-filter: blur(24px) saturate(150%);
     background:
       linear-gradient(180deg, rgba(11, 18, 31, 0.92) 0%, rgba(11, 18, 31, 0.74) 100%),
@@ -260,6 +330,15 @@ body::before {
       inset 0 1px 0 rgba(255, 255, 255, 0.04);
   }
 
+  .workspace-panel .glass-card,
+  .glass-panel .glass-card {
+    border-radius: 0.85rem;
+    border-color: rgba(188, 202, 224, 0.22);
+    background:
+      linear-gradient(145deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0) 58%),
+      rgba(40, 53, 76, 0.78);
+  }
+
   .glass-panel,
   .glass-card,
   .workspace-panel,
@@ -284,7 +363,59 @@ body::before {
     border: 1px solid rgba(184, 199, 220, 0.24);
     background: rgba(39, 50, 70, 0.84);
     color: #deebff;
-    min-height: 2.4rem;
+    min-height: 2.45rem;
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .app-nav-link {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.1rem;
+    border-radius: 0.88rem;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .app-nav-link::before {
+    content: '';
+    position: absolute;
+    left: -0.45rem;
+    top: 50%;
+    width: 0.2rem;
+    height: 0.82rem;
+    border-radius: 999px;
+    transform: translateY(-50%);
+    background: rgba(238, 244, 255, 0.9);
+    opacity: 0;
+    transition: all 140ms var(--ease-discord);
+  }
+
+  .app-nav-link-label {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: #edf3ff;
+    line-height: 1.15;
+  }
+
+  .app-nav-link-meta {
+    font-size: 0.68rem;
+    color: #a9b7cb;
+    line-height: 1.2;
+  }
+
+  .app-nav-link.active {
+    border-color: rgba(98, 125, 255, 0.62);
+    background: linear-gradient(145deg, rgba(98, 125, 255, 0.28), rgba(59, 82, 212, 0.22));
+    box-shadow: inset 0 0 0 1px rgba(98, 125, 255, 0.18);
+  }
+
+  .app-nav-link.active::before {
+    opacity: 1;
+    height: 1.22rem;
   }
 
   .nav-link:hover {
@@ -556,8 +687,12 @@ body::before {
     min-height: 0;
     overflow: hidden;
     overscroll-behavior: contain;
-    padding-top: 0.5rem;
-    padding-bottom: 0.5rem;
+    padding-top: 0.25rem;
+    padding-bottom: 0.2rem;
+  }
+
+  .comms-layout {
+    border-radius: 1rem;
   }
 
   .server-rail {
@@ -716,7 +851,7 @@ body::before {
     padding: 1.25rem 1.15rem;
     display: flex;
     flex-direction: column;
-    gap: 0.9rem;
+    gap: 0.64rem;
     background:
       radial-gradient(circle at 24% 18%, rgba(88, 101, 242, 0.08) 0, transparent 40%),
       radial-gradient(circle at 84% 10%, rgba(53, 210, 255, 0.095) 0, transparent 45%),
@@ -754,7 +889,7 @@ body::before {
   }
 
   .msg-bubble p {
-    line-height: 1.45;
+    line-height: 1.4;
   }
 
   .msg-bubble.other {
@@ -885,7 +1020,7 @@ body::before {
     border-radius: 0.68rem;
     border: 1px solid transparent;
     background: rgba(48, 60, 84, 0.9);
-    padding: 0.62rem 0.7rem;
+    padding: 0.5rem 0.62rem;
     text-align: left;
     transition-duration: 120ms;
     transition-timing-function: var(--ease-discord);
@@ -923,6 +1058,47 @@ body::before {
 
   .channel-row.active .surface-muted {
     color: rgba(231, 238, 255, 0.84);
+  }
+
+  .workspace-panel section h2,
+  .workspace-panel section h3 {
+    letter-spacing: -0.01em;
+  }
+
+  .list-section-header {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    backdrop-filter: blur(10px) saturate(125%);
+    background: linear-gradient(180deg, rgba(12, 20, 33, 0.92), rgba(12, 20, 33, 0.7));
+    border: 1px solid rgba(177, 191, 214, 0.18);
+    border-radius: 0.72rem;
+    padding: 0.4rem 0.62rem;
+  }
+
+  .list-row-compact {
+    padding: 0.48rem 0.56rem !important;
+    border-radius: 0.7rem !important;
+  }
+
+  .list-row-comfy {
+    padding: 0.68rem 0.76rem !important;
+    border-radius: 0.84rem !important;
+  }
+
+  .priority-row {
+    border-color: rgba(251, 191, 36, 0.42) !important;
+    background:
+      linear-gradient(145deg, rgba(251, 191, 36, 0.08), rgba(251, 191, 36, 0)),
+      rgba(40, 53, 76, 0.82) !important;
+    box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.16);
+  }
+
+  .channel-row.has-unread {
+    border-color: rgba(244, 63, 94, 0.34);
+    background:
+      linear-gradient(145deg, rgba(244, 63, 94, 0.1), rgba(244, 63, 94, 0)),
+      rgba(48, 60, 84, 0.92);
   }
 
   .message-list>.msg-row {
@@ -1704,13 +1880,45 @@ body::before {
 }
 
 @media (max-width: 767px) {
+  .app-layout-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .app-sidebar {
+    position: static;
+    height: auto;
+    border-right: 0;
+    border-bottom: 1px solid rgba(177, 191, 214, 0.16);
+    padding: 0.72rem;
+    gap: 0.6rem;
+  }
+
+  .app-sidebar-head .top-brand {
+    font-size: 0.98rem;
+  }
+
+  .app-sidebar-nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.42rem;
+  }
+
+  .app-nav-link {
+    min-height: 3.1rem;
+    justify-content: center;
+  }
+
+  .app-nav-link-meta {
+    font-size: 0.64rem;
+  }
+
   .top-nav {
-    margin-bottom: 0.6rem;
+    margin-bottom: 0;
   }
 
   .discord-shell {
     gap: 0.55rem;
-    min-height: calc(100dvh - 4.9rem);
+    min-height: calc(100dvh - 3.9rem);
   }
 
   .server-rail {
@@ -1804,8 +2012,43 @@ body::before {
 }
 
 @media (min-width: 768px) {
+  .sidebar-collapsed .app-sidebar-subtitle,
+  .sidebar-collapsed .app-nav-link-meta {
+    display: none;
+  }
+
+  .sidebar-collapsed .app-sidebar {
+    padding-left: 0.55rem;
+    padding-right: 0.55rem;
+  }
+
+  .sidebar-collapsed .app-sidebar .top-brand {
+    font-size: 0;
+    gap: 0;
+  }
+
+  .sidebar-collapsed .app-sidebar .top-brand-dot {
+    width: 0.74rem;
+    height: 0.74rem;
+    box-shadow: 0 0 0 5px rgba(88, 101, 242, 0.18);
+  }
+
+  .sidebar-collapsed .app-nav-link {
+    align-items: center;
+    padding-left: 0.35rem;
+    padding-right: 0.35rem;
+  }
+
+  .sidebar-collapsed .app-nav-link-label {
+    font-size: 0.66rem;
+    text-align: center;
+    line-height: 1.15;
+  }
+}
+
+@media (min-width: 768px) {
   .discord-shell {
-    grid-template-columns: 4.2rem minmax(230px, 290px) minmax(0, 1fr);
+    grid-template-columns: 4.1rem minmax(260px, 340px) minmax(0, 1fr);
   }
 
   .profile-shell {
@@ -1823,7 +2066,7 @@ body::before {
 
 @media (min-width: 1280px) {
   .discord-shell {
-    grid-template-columns: 4.2rem minmax(250px, 300px) minmax(0, 1fr) minmax(260px, 320px);
+    grid-template-columns: 4.1rem minmax(280px, 350px) minmax(0, 1fr) minmax(280px, 360px);
   }
 
   .profile-shell {

@@ -561,7 +561,7 @@ export default function AdminPage() {
   };
 
   return (
-    <main className="space-y-4" aria-busy={isConnecting || isUpdating}>
+    <main className="space-y-4 px-1 py-1 sm:px-2" aria-busy={isConnecting || isUpdating}>
       <section className="glass-panel rounded-2xl p-4">
         <h1 className="text-xl font-semibold">Admin-Panel</h1>
         <p className="surface-muted mt-1 text-sm">Mit Admin-Token verbinden, um Warteschlange und Entscheidungen live zu verwalten.</p>
@@ -981,10 +981,10 @@ export default function AdminPage() {
 
       {snapshot ? <section className="grid gap-4 md:grid-cols-2">
         <div className="glass-panel rounded-2xl p-4">
-          <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">Wartend ({pendingCount})</h2>
+        <h2 className="list-section-header surface-muted text-sm font-semibold uppercase tracking-wide">Wartend ({pendingCount})</h2>
           <ul className="mt-3 space-y-2">
             {pendingUsers.map((user) => (
-              <li key={user.id} className="glass-card rounded-lg p-3">
+              <li key={user.id} className="glass-card list-row-comfy priority-row rounded-lg p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <p className="text-sm font-semibold text-slate-100">{user.name}</p>
@@ -1017,10 +1017,10 @@ export default function AdminPage() {
         </div>
 
         <div className="glass-panel rounded-2xl p-4">
-          <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">Freigegeben ({approvedUsers.length})</h2>
+          <h2 className="list-section-header surface-muted text-sm font-semibold uppercase tracking-wide">Freigegeben ({approvedUsers.length})</h2>
           <ul className="mt-3 space-y-2">
             {approvedUsers.map((user) => (
-              <li key={user.id} className="glass-card rounded-lg p-3 text-sm text-slate-100">
+              <li key={user.id} className="glass-card list-row-comfy rounded-lg p-3 text-sm text-slate-100">
                 <div className="flex items-center justify-between gap-2">
                   <span>{user.name}</span>
                   <StatusPill status={user.status} />
@@ -1040,10 +1040,10 @@ export default function AdminPage() {
             {approvedUsers.length === 0 ? <li className="surface-muted text-sm">Noch keine freigegebenen Nutzer.</li> : null}
           </ul>
 
-          <h2 className="surface-muted mt-5 text-sm font-semibold uppercase tracking-wide">Abgelehnt ({rejectedUsers.length})</h2>
+          <h2 className="list-section-header surface-muted mt-5 text-sm font-semibold uppercase tracking-wide">Abgelehnt ({rejectedUsers.length})</h2>
           <ul className="mt-3 space-y-2">
             {rejectedUsers.map((user) => (
-              <li key={user.id} className="glass-card rounded-lg p-3 text-sm text-slate-100">
+              <li key={user.id} className="glass-card list-row-compact rounded-lg p-3 text-sm text-slate-100">
                 <div className="flex items-center justify-between gap-2">
                   <span>{user.name}</span>
                   <StatusPill status={user.status} />
@@ -1056,10 +1056,10 @@ export default function AdminPage() {
       </section> : null}
 
       {snapshot ? <section className="glass-panel rounded-2xl p-4">
-        <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">Chats</h2>
+        <h2 className="list-section-header surface-muted text-sm font-semibold uppercase tracking-wide">Chats</h2>
         <ul className="mt-3 space-y-2">
           {activeChats.map((chat) => (
-            <li key={chat.id} className="glass-card rounded-lg p-3">
+            <li key={chat.id} className="glass-card list-row-compact rounded-lg p-3">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-slate-100">{chat.name}</p>
@@ -1073,10 +1073,10 @@ export default function AdminPage() {
           {activeChats.length === 0 ? <li className="surface-muted text-sm">Keine aktiven Chats.</li> : null}
         </ul>
 
-        <h3 className="surface-muted mt-5 text-sm font-semibold uppercase tracking-wide">Deaktiviert</h3>
+        <h3 className="list-section-header surface-muted mt-5 text-sm font-semibold uppercase tracking-wide">Deaktiviert</h3>
         <ul className="mt-3 space-y-2">
           {deactivatedChats.map((chat) => (
-            <li key={chat.id} className="glass-card rounded-lg p-3">
+            <li key={chat.id} className="glass-card list-row-compact rounded-lg p-3">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-slate-100">{chat.name}</p>
@@ -1101,10 +1101,10 @@ export default function AdminPage() {
       </section> : null}
 
       {snapshot ? <section className="glass-panel rounded-2xl p-4">
-        <h2 className="surface-muted text-sm font-semibold uppercase tracking-wide">Letzte Nachrichten</h2>
+        <h2 className="list-section-header surface-muted text-sm font-semibold uppercase tracking-wide">Letzte Nachrichten</h2>
         <ul className="mt-3 space-y-2">
           {recentMessages.map((message) => (
-            <li key={message.id} className="glass-card rounded-lg p-3">
+            <li key={message.id} className="glass-card list-row-compact rounded-lg p-3">
               <p className="text-xs text-slate-400">
                 {new Date(message.createdAt).toLocaleTimeString()} - [{message.chatName}] {message.userName}
               </p>

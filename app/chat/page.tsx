@@ -2729,7 +2729,7 @@ export default function ChatPage() {
   return (
     <>
       <motion.main
-        className="discord-shell chat-page-shell"
+        className="discord-shell chat-page-shell comms-layout"
         style={chatBackgroundStyle(me?.chatBackground)}
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
@@ -2811,7 +2811,7 @@ export default function ChatPage() {
                   <motion.button
                     whileHover={{ x: 3 }}
                     whileTap={{ scale: 0.985 }}
-                    className={`channel-row ${chat.id === activeChatId ? 'active' : ''}`}
+                    className={`channel-row ${chat.id === activeChatId ? 'active' : ''} ${chat.unreadCount > 0 ? 'has-unread' : ''}`}
                     onClick={() => void selectChat(chat.id)}
                   >
                     <div className="flex items-center justify-between gap-2">

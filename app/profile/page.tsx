@@ -646,7 +646,7 @@ export default function ProfilePage() {
 
   return (
     <>
-      <main className="mx-auto w-full max-w-7xl px-3 py-3 sm:px-4 sm:py-4">
+      <main className="w-full px-2 py-2 sm:px-3 sm:py-3">
         <div className="grid gap-4 xl:grid-cols-[22rem_minmax(0,1fr)]">
           <section className="space-y-4 xl:sticky xl:top-4 xl:self-start">
             <div className="glass-panel overflow-hidden rounded-[1.75rem] p-0">
