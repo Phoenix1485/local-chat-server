@@ -13,9 +13,10 @@ import {
 import { ensureMysqlSchema, getMysqlPool } from '@/lib/mysql';
 import { rateLimiter } from '@/lib/rateLimiter';
 import { createSessionToken, hashPassword, hashToken, normalizeEmail, normalizeUsername, verifyPassword } from '@/lib/security';
-import { normalizeName } from '@/lib/validation';
+import { normalizeChatBackgroundStyle, normalizeName } from '@/lib/validation';
 import type {
   AppChatAttachment,
+  AppChatBackgroundStyle,
   AppChatNotificationMode,
   AppChatPreferences,
   AppBootstrap,
@@ -59,6 +60,7 @@ type AccountRow = RowDataPacket & {
   global_role: GlobalRole;
   accent_color: string;
   chat_background: ChatBackgroundPreset;
+  chat_background_style_json: string | null;
   avatar_updated_at: number | null;
   created_at: number;
   updated_at: number;
@@ -99,6 +101,7 @@ type ChatSummaryRow = RowDataPacket & {
   is_archived: number;
   notification_mode: AppChatNotificationMode;
   chat_background: ChatBackgroundPreset | null;
+  chat_background_style_json: string | null;
 };
 
 type GroupChatControlRow = RowDataPacket & {
@@ -130,6 +133,7 @@ type ChatMemberRow = RowDataPacket & {
   global_role: GlobalRole;
   accent_color: string;
   chat_background: ChatBackgroundPreset;
+  chat_background_style_json: string | null;
   avatar_updated_at: number | null;
   joined_at: number;
   member_role: GroupMemberRole;
@@ -150,6 +154,7 @@ type ChatMemberProfileRow = RowDataPacket & {
   global_role: GlobalRole;
   accent_color: string;
   chat_background: ChatBackgroundPreset;
+  chat_background_style_json: string | null;
   avatar_updated_at: number | null;
 };
 
@@ -168,6 +173,7 @@ type MessageRow = RowDataPacket & {
   global_role: GlobalRole;
   accent_color: string;
   chat_background: ChatBackgroundPreset;
+  chat_background_style_json: string | null;
   avatar_updated_at: number | null;
 };
 
@@ -181,6 +187,7 @@ type FriendProfileRow = RowDataPacket & {
   global_role: GlobalRole;
   accent_color: string;
   chat_background: ChatBackgroundPreset;
+  chat_background_style_json: string | null;
   avatar_updated_at: number | null;
 };
 
@@ -322,6 +329,7 @@ type ChatPreferenceRow = RowDataPacket & {
   is_archived: number;
   notification_mode: AppChatNotificationMode;
   chat_background: ChatBackgroundPreset | null;
+  chat_background_style_json: string | null;
   created_at: number;
   updated_at: number;
 };
@@ -678,6 +686,23 @@ function createGroupInviteCode(): string {
   return randomUUID().replace(/-/g, '').slice(0, 18);
 }
 
+function parseChatBackgroundStyleJson(value: unknown): AppChatBackgroundStyle | null {
+  if (!value || typeof value !== 'string') {
+    return null;
+  }
+
+  try {
+    return normalizeChatBackgroundStyle(JSON.parse(value));
+  } catch {
+    return null;
+  }
+}
+
+function stringifyChatBackgroundStyle(value: AppChatBackgroundStyle | null | undefined): string | null {
+  const normalized = normalizeChatBackgroundStyle(value);
+  return normalized ? JSON.stringify(normalized) : null;
+}
+
 function mapProfile(
   row: {
     user_id: string;
@@ -689,6 +714,7 @@ function mapProfile(
     global_role: GlobalRole;
     accent_color: string;
     chat_background: ChatBackgroundPreset;
+    chat_background_style_json?: string | null;
     avatar_updated_at: number | null;
   },
   options?: { includeEmail?: boolean; isFriend?: boolean; displayName?: string; nicknameSlots?: AppNicknameSlot[] }
@@ -711,6 +737,7 @@ function mapProfile(
     role: row.global_role,
     accentColor: (row.accent_color ?? '').trim() || '#38bdf8',
     chatBackground: toChatBackgroundPreset(row.chat_background),
+    chatBackgroundStyle: parseChatBackgroundStyleJson(row.chat_background_style_json),
     nicknameSlots: options?.nicknameSlots,
     isFriend: options?.isFriend
   };
@@ -743,13 +770,15 @@ function mapChatPreferences(
     is_archived?: number | null;
     notification_mode?: AppChatNotificationMode | null;
     chat_background?: ChatBackgroundPreset | null;
+    chat_background_style_json?: string | null;
   } | null
 ): AppChatPreferences {
   const chatBackground = row?.chat_background ? toChatBackgroundPreset(row.chat_background) : null;
   return {
     archived: asNumber(row?.is_archived, 0) === 1,
     notificationMode: toChatNotificationMode(row?.notification_mode),
-    chatBackground
+    chatBackground,
+    chatBackgroundStyle: parseChatBackgroundStyleJson(row?.chat_background_style_json)
   };
 }
 
@@ -1052,6 +1081,7 @@ export class SocialStore {
           global_role,
           accent_color,
           chat_background,
+          chat_background_style_json,
           avatar_updated_at,
           created_at,
           updated_at
@@ -1086,6 +1116,7 @@ export class SocialStore {
           a.global_role,
           a.accent_color,
           a.chat_background,
+          a.chat_background_style_json,
           a.avatar_updated_at,
           a.created_at,
           a.updated_at,
@@ -1498,6 +1529,7 @@ export class SocialStore {
           a.global_role,
           a.accent_color,
           a.chat_background,
+          a.chat_background_style_json,
           a.avatar_updated_at
         FROM chat_memberships cm
         JOIN auth_accounts a ON a.user_id = cm.user_id
@@ -1751,6 +1783,7 @@ export class SocialStore {
           a.global_role,
           a.accent_color,
           a.chat_background,
+          a.chat_background_style_json,
           a.avatar_updated_at
         FROM messages m
         JOIN auth_accounts a ON a.user_id = m.user_id
@@ -1850,6 +1883,7 @@ export class SocialStore {
           a.global_role,
           a.accent_color,
           a.chat_background,
+          a.chat_background_style_json,
           a.avatar_updated_at
         FROM auth_accounts a
         WHERE a.user_id IN (${placeholders})
@@ -1913,6 +1947,7 @@ export class SocialStore {
           COALESCE(cmp.is_archived, 0) AS is_archived,
           COALESCE(cmp.notification_mode, 'mentions') AS notification_mode,
           cmp.chat_background AS chat_background,
+          cmp.chat_background_style_json AS chat_background_style_json,
           cm_user.member_role,
           COUNT(DISTINCT cm_all.user_id) AS members_count,
           MAX(m.created_at) AS last_message_at,
@@ -1982,6 +2017,7 @@ export class SocialStore {
           cmp.is_archived,
           cmp.notification_mode,
           cmp.chat_background,
+          cmp.chat_background_style_json,
           cm_user.user_id,
           cm_user.member_role,
           a_me.username
@@ -2077,6 +2113,7 @@ export class SocialStore {
       archived?: boolean;
       notificationMode?: AppChatNotificationMode;
       chatBackground?: ChatBackgroundPreset | null;
+      chatBackgroundStyle?: AppChatBackgroundStyle | null;
     }
   ): Promise<AppChatSummary> {
     await this.ensureReady();
@@ -2095,6 +2132,7 @@ export class SocialStore {
           is_archived,
           notification_mode,
           chat_background,
+          chat_background_style_json,
           created_at,
           updated_at
         FROM chat_member_preferences
@@ -2106,15 +2144,25 @@ export class SocialStore {
     );
 
     const current = mapChatPreferences(rows[0] ?? null);
+    const nextChatBackground =
+      input.chatBackground === null
+        ? null
+        : input.chatBackground
+          ? toChatBackgroundPreset(input.chatBackground)
+          : current.chatBackground;
+    const nextChatBackgroundStyle =
+      input.chatBackgroundStyle === null
+        ? null
+        : input.chatBackgroundStyle
+          ? normalizeChatBackgroundStyle(input.chatBackgroundStyle)
+          : input.chatBackground !== undefined
+            ? (nextChatBackground ? normalizeChatBackgroundStyle({ mode: 'preset', preset: nextChatBackground }) : null)
+            : current.chatBackgroundStyle;
     const next = {
       archived: typeof input.archived === 'boolean' ? input.archived : current.archived,
       notificationMode: input.notificationMode ? toChatNotificationMode(input.notificationMode) : current.notificationMode,
-      chatBackground:
-        input.chatBackground === null
-          ? null
-          : input.chatBackground
-            ? toChatBackgroundPreset(input.chatBackground)
-            : current.chatBackground
+      chatBackground: nextChatBackground,
+      chatBackgroundStyle: nextChatBackgroundStyle
     };
 
     await pool.query<ResultSetHeader>(
@@ -2125,17 +2173,19 @@ export class SocialStore {
           is_archived,
           notification_mode,
           chat_background,
+          chat_background_style_json,
           created_at,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           is_archived = VALUES(is_archived),
           notification_mode = VALUES(notification_mode),
           chat_background = VALUES(chat_background),
+          chat_background_style_json = VALUES(chat_background_style_json),
           updated_at = VALUES(updated_at)
       `,
-      [chatId, userId, next.archived ? 1 : 0, next.notificationMode, next.chatBackground, now, now]
+      [chatId, userId, next.archived ? 1 : 0, next.notificationMode, next.chatBackground, stringifyChatBackgroundStyle(next.chatBackgroundStyle), now, now]
     );
 
     const chats = await this.listChats(userId);
@@ -2160,6 +2210,9 @@ export class SocialStore {
           a.bio,
           a.email,
           a.global_role,
+          a.accent_color,
+          a.chat_background,
+          a.chat_background_style_json,
           a.avatar_updated_at
         FROM friendships f
         JOIN auth_accounts a
@@ -2667,6 +2720,7 @@ export class SocialStore {
           a.global_role,
           a.accent_color,
           a.chat_background,
+          a.chat_background_style_json,
           a.avatar_updated_at,
           CASE
             WHEN EXISTS (
@@ -2712,6 +2766,7 @@ export class SocialStore {
           a.global_role,
           a.accent_color,
           a.chat_background,
+          a.chat_background_style_json,
           a.avatar_updated_at,
           CASE
             WHEN EXISTS (
@@ -2821,6 +2876,7 @@ export class SocialStore {
       email: string | null;
       accentColor: string;
       chatBackground: ChatBackgroundPreset;
+      chatBackgroundStyle?: AppChatBackgroundStyle | null;
       nicknameSlots: Array<{
         id?: string | null;
         nickname: string;
@@ -2840,6 +2896,7 @@ export class SocialStore {
     const displayName = `${firstName} ${lastName}`.trim();
     const accentColor = input.accentColor.trim().slice(0, 7) || '#38bdf8';
     const chatBackground = toChatBackgroundPreset(input.chatBackground);
+    const chatBackgroundStyle = normalizeChatBackgroundStyle(input.chatBackgroundStyle ?? { mode: 'preset', preset: chatBackground });
     const nicknameSlots = input.nicknameSlots.slice(0, APP_LIMITS.profileNicknameSlotsMax);
 
     await this.assertAllowedIdentity({
@@ -2867,10 +2924,10 @@ export class SocialStore {
     await pool.query<ResultSetHeader>(
       `
         UPDATE auth_accounts
-        SET first_name = ?, last_name = ?, bio = ?, email = ?, email_norm = ?, accent_color = ?, chat_background = ?, updated_at = ?
+        SET first_name = ?, last_name = ?, bio = ?, email = ?, email_norm = ?, accent_color = ?, chat_background = ?, chat_background_style_json = ?, updated_at = ?
         WHERE user_id = ?
       `,
-      [firstName, lastName, bio, email, emailNorm, accentColor, chatBackground, now, userId]
+      [firstName, lastName, bio, email, emailNorm, accentColor, chatBackground, stringifyChatBackgroundStyle(chatBackgroundStyle), now, userId]
     );
 
     await pool.query<ResultSetHeader>('UPDATE users SET name = ?, updated_at = ? WHERE id = ?', [
@@ -4391,6 +4448,7 @@ export class SocialStore {
           a.global_role,
           a.accent_color,
           a.chat_background,
+          a.chat_background_style_json,
           a.avatar_updated_at,
           cm.joined_at,
           cm.member_role,
@@ -4445,6 +4503,7 @@ export class SocialStore {
           a.global_role,
           a.accent_color,
           a.chat_background,
+          a.chat_background_style_json,
           a.avatar_updated_at
         FROM (
           SELECT id, chat_id, user_id, text, created_at, attachments_json

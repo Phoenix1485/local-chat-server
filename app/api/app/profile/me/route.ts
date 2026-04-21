@@ -1,8 +1,16 @@
 import { requireSession } from '@/lib/appAuth';
 import { enforceSameOrigin, jsonError } from '@/lib/http';
 import { socialStore } from '@/lib/socialStore';
-import { validateBio, validateEmail, validateHexColor, validateNickname, validateThemePreset } from '@/lib/validation';
-import type { ChatBackgroundPreset, NicknameScope } from '@/types/social';
+import {
+  normalizeChatBackgroundStyle,
+  validateBio,
+  validateChatBackgroundStyle,
+  validateEmail,
+  validateHexColor,
+  validateNickname,
+  validateThemePreset
+} from '@/lib/validation';
+import type { AppChatBackgroundStyle, ChatBackgroundPreset, NicknameScope } from '@/types/social';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,6 +22,7 @@ type UpdateProfilePayload = {
   email?: string | null;
   accentColor?: string;
   chatBackground?: ChatBackgroundPreset;
+  chatBackgroundStyle?: AppChatBackgroundStyle | null;
   nicknameSlots?: Array<{
     id?: string | null;
     nickname?: string;
@@ -68,7 +77,10 @@ export async function PATCH(request: Request): Promise<Response> {
   const bio = payload.bio?.trim() ?? '';
   const emailRaw = typeof payload.email === 'string' ? payload.email.trim() : '';
   const accentColor = payload.accentColor?.trim() ?? '#38bdf8';
-  const chatBackground = payload.chatBackground?.trim() ?? 'aurora';
+  const chatBackground = (payload.chatBackground?.trim() ?? 'aurora') as ChatBackgroundPreset;
+  const chatBackgroundStyle = payload.chatBackgroundStyle === undefined
+    ? { mode: 'preset', preset: chatBackground } satisfies AppChatBackgroundStyle
+    : payload.chatBackgroundStyle;
   const nicknameSlots = Array.isArray(payload.nicknameSlots) ? payload.nicknameSlots : [];
 
   if (!firstName || !lastName) {
@@ -91,6 +103,12 @@ export async function PATCH(request: Request): Promise<Response> {
   const backgroundError = validateThemePreset(chatBackground, ['aurora', 'sunset', 'midnight', 'forest', 'paper'] as const);
   if (backgroundError) {
     return jsonError(backgroundError, 422);
+  }
+  if (chatBackgroundStyle !== null) {
+    const backgroundStyleError = validateChatBackgroundStyle(chatBackgroundStyle);
+    if (backgroundStyleError) {
+      return jsonError(backgroundStyleError, 422);
+    }
   }
   if (nicknameSlots.length > 3) {
     return jsonError('Only up to 3 nicknames are allowed.', 422);
@@ -120,6 +138,7 @@ export async function PATCH(request: Request): Promise<Response> {
       email: emailRaw || null,
       accentColor,
       chatBackground: chatBackground as ChatBackgroundPreset,
+      chatBackgroundStyle: chatBackgroundStyle === null ? null : normalizeChatBackgroundStyle(chatBackgroundStyle),
       nicknameSlots: nicknameSlots.map((slot) => ({
         id: slot.id?.trim() || null,
         nickname: slot.nickname?.trim() ?? '',

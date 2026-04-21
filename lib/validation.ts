@@ -1,3 +1,5 @@
+import type { AppChatBackgroundStyle, ChatBackgroundPreset } from '@/types/social';
+
 export function normalizeName(value: string): string {
   return value.trim().replace(/\s+/g, ' ');
 }
@@ -98,6 +100,102 @@ export function validateThemePreset(value: string, allowed: readonly string[]): 
   if (!allowed.includes(normalized)) {
     return 'Theme preset is invalid.';
   }
+  return null;
+}
+
+const CHAT_BACKGROUND_PRESETS: ChatBackgroundPreset[] = ['aurora', 'sunset', 'midnight', 'forest', 'paper'];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function normalizedHex(value: unknown, fallback: string): string {
+  const input = typeof value === 'string' ? value.trim() : '';
+  return validateHexColor(input) ? fallback : input;
+}
+
+function normalizedAngle(value: unknown): number {
+  const raw = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(raw)) {
+    return 145;
+  }
+  return Math.max(0, Math.min(360, Math.round(raw)));
+}
+
+function normalizedImageDim(value: unknown): number {
+  const raw = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(raw)) {
+    return 58;
+  }
+  return Math.max(0, Math.min(88, Math.round(raw)));
+}
+
+function normalizedImageUrl(value: unknown): string {
+  const input = typeof value === 'string' ? value.trim() : '';
+  if (!input || input.length > 1200) {
+    return '';
+  }
+
+  try {
+    const url = new URL(input);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : '';
+  } catch {
+    return '';
+  }
+}
+
+export function normalizeChatBackgroundStyle(value: unknown): AppChatBackgroundStyle | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  if (value.mode === 'solid') {
+    return {
+      mode: 'solid',
+      color: normalizedHex(value.color, '#0f172a')
+    };
+  }
+
+  if (value.mode === 'gradient') {
+    return {
+      mode: 'gradient',
+      gradientFrom: normalizedHex(value.gradientFrom, '#1a2740'),
+      gradientTo: normalizedHex(value.gradientTo, '#020617'),
+      gradientAngle: normalizedAngle(value.gradientAngle)
+    };
+  }
+
+  if (value.mode === 'image') {
+    return {
+      mode: 'image',
+      imageUrl: normalizedImageUrl(value.imageUrl),
+      imageDim: normalizedImageDim(value.imageDim)
+    };
+  }
+
+  const preset = CHAT_BACKGROUND_PRESETS.includes(value.preset as ChatBackgroundPreset)
+    ? (value.preset as ChatBackgroundPreset)
+    : 'aurora';
+  return {
+    mode: 'preset',
+    preset
+  };
+}
+
+export function validateChatBackgroundStyle(value: unknown): string | null {
+  if (!isRecord(value)) {
+    return 'Chat background style is invalid.';
+  }
+
+  const normalized = normalizeChatBackgroundStyle(value);
+  if (!normalized) {
+    return 'Chat background style is invalid.';
+  }
+
+  if (normalized.mode === 'image' && !normalized.imageUrl) {
+    return 'Background image must be a valid http or https URL.';
+  }
+
   return null;
 }
 

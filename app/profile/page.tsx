@@ -5,6 +5,7 @@ import { CSSProperties, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type {
   AppBootstrap,
+  AppChatBackgroundStyle,
   AppDesktopNotificationMode,
   AppNicknameSlot,
   AppUserPreferences,
@@ -18,13 +19,24 @@ const TOKEN_KEY = 'chat_auth_token';
 type ProfileWorkspaceTab = 'account' | 'social' | 'discover';
 type SocialWorkspaceTab = 'friends' | 'requests' | 'discover';
 
-const BACKGROUND_PRESETS: Array<{ value: ChatBackgroundPreset; label: string }> = [
-  { value: 'aurora', label: 'Aurora' },
-  { value: 'sunset', label: 'Sunset' },
-  { value: 'midnight', label: 'Midnight' },
-  { value: 'forest', label: 'Forest' },
-  { value: 'paper', label: 'Paper' }
+const BACKGROUND_PRESETS: Array<{ value: ChatBackgroundPreset; label: string; icon: string }> = [
+  { value: 'aurora', label: 'Aurora', icon: '✦' },
+  { value: 'sunset', label: 'Sunset', icon: '◐' },
+  { value: 'midnight', label: 'Midnight', icon: '◒' },
+  { value: 'forest', label: 'Forest', icon: '◇' },
+  { value: 'paper', label: 'Paper', icon: '□' }
 ];
+
+const DEFAULT_BACKGROUND_STYLE: AppChatBackgroundStyle = {
+  mode: 'preset',
+  preset: 'aurora',
+  color: '#0f172a',
+  gradientFrom: '#1a2740',
+  gradientTo: '#020617',
+  gradientAngle: 145,
+  imageUrl: '',
+  imageDim: 58
+};
 
 const DEFAULT_USER_PREFERENCES: AppUserPreferences = {
   desktopNotifications: 'mentions',
@@ -47,7 +59,30 @@ function hexToRgba(hex: string | undefined, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-function profileThemePreviewStyle(preset: ChatBackgroundPreset): CSSProperties {
+function safeCssImageUrl(url: string): string {
+  return url.replace(/["\\\n\r]/g, '');
+}
+
+function profileThemePreviewStyle(input: ChatBackgroundPreset | AppChatBackgroundStyle | null | undefined): CSSProperties {
+  if (input && typeof input === 'object') {
+    if (input.mode === 'solid') {
+      return { background: input.color ?? '#0f172a' };
+    }
+    if (input.mode === 'gradient') {
+      return {
+        background: `linear-gradient(${input.gradientAngle ?? 145}deg, ${input.gradientFrom ?? '#1a2740'} 0%, ${input.gradientTo ?? '#020617'} 100%)`
+      };
+    }
+    if (input.mode === 'image' && input.imageUrl) {
+      const dim = Math.max(0, Math.min(88, input.imageDim ?? 58)) / 100;
+      return {
+        background: `linear-gradient(rgba(2, 6, 23, ${dim}), rgba(2, 6, 23, ${dim})), url("${safeCssImageUrl(input.imageUrl)}") center / cover, #020617`
+      };
+    }
+    return profileThemePreviewStyle(input.preset ?? 'aurora');
+  }
+
+  const preset = input;
   if (preset === 'sunset') {
     return { background: 'radial-gradient(circle at top, rgba(251,146,60,0.3), transparent 38%), linear-gradient(180deg, #3b2434 0%, #1f2937 100%)' };
   }
@@ -77,7 +112,7 @@ function profileAccentStyle(user: AppUserProfile | null | undefined): CSSPropert
 function profileHeroStyle(user: AppUserProfile | null | undefined): CSSProperties {
   const accent = user?.accentColor ?? '#38bdf8';
   return {
-    ...profileThemePreviewStyle(user?.chatBackground ?? 'aurora'),
+    ...profileThemePreviewStyle(user?.chatBackgroundStyle ?? user?.chatBackground ?? 'aurora'),
     borderColor: hexToRgba(accent, 0.34),
     boxShadow: `0 18px 42px ${hexToRgba(accent, 0.14)}`,
     position: 'relative',
@@ -91,6 +126,162 @@ function themeLabel(preset?: ChatBackgroundPreset): string {
   if (preset === 'forest') return 'Forest';
   if (preset === 'paper') return 'Paper';
   return 'Aurora';
+}
+
+function completeBackgroundStyle(value: AppChatBackgroundStyle | null | undefined): AppChatBackgroundStyle {
+  return {
+    ...DEFAULT_BACKGROUND_STYLE,
+    ...(value ?? {}),
+    preset: value?.preset ?? DEFAULT_BACKGROUND_STYLE.preset,
+    color: value?.color ?? DEFAULT_BACKGROUND_STYLE.color,
+    gradientFrom: value?.gradientFrom ?? DEFAULT_BACKGROUND_STYLE.gradientFrom,
+    gradientTo: value?.gradientTo ?? DEFAULT_BACKGROUND_STYLE.gradientTo,
+    gradientAngle: value?.gradientAngle ?? DEFAULT_BACKGROUND_STYLE.gradientAngle,
+    imageUrl: value?.imageUrl ?? DEFAULT_BACKGROUND_STYLE.imageUrl,
+    imageDim: value?.imageDim ?? DEFAULT_BACKGROUND_STYLE.imageDim
+  };
+}
+
+function backgroundPresetFromStyle(value: AppChatBackgroundStyle | null | undefined): ChatBackgroundPreset {
+  return value?.mode === 'preset' && value.preset ? value.preset : 'aurora';
+}
+
+function backgroundStyleLabel(value: AppChatBackgroundStyle | null | undefined): string {
+  const style = completeBackgroundStyle(value);
+  if (style.mode === 'solid') return 'Farbe';
+  if (style.mode === 'gradient') return 'Verlauf';
+  if (style.mode === 'image') return 'Bild';
+  return themeLabel(style.preset);
+}
+
+function BackgroundDesigner({
+  value,
+  fallback,
+  allowInherit = false,
+  disabled = false,
+  onChange
+}: {
+  value: AppChatBackgroundStyle | null;
+  fallback?: AppChatBackgroundStyle | null;
+  allowInherit?: boolean;
+  disabled?: boolean;
+  onChange: (next: AppChatBackgroundStyle | null) => void;
+}) {
+  const inherited = allowInherit && value === null;
+  const activeStyle = completeBackgroundStyle(inherited ? fallback : value);
+  const editBase = completeBackgroundStyle(value ?? fallback);
+
+  const setMode = (mode: AppChatBackgroundStyle['mode']) => {
+    onChange({ ...editBase, mode });
+  };
+
+  const patchStyle = (patch: Partial<AppChatBackgroundStyle>) => {
+    onChange({ ...editBase, ...patch });
+  };
+
+  return (
+    <div className="background-designer">
+      <div className="background-designer-preview" style={profileThemePreviewStyle(activeStyle)}>
+        <div>
+          <p>{inherited ? 'Globaler Standard' : activeStyle.mode === 'image' ? 'Bild' : activeStyle.mode === 'gradient' ? 'Verlauf' : activeStyle.mode === 'solid' ? 'Farbe' : themeLabel(activeStyle.preset)}</p>
+          <span>{inherited ? 'wird übernommen' : 'eigener Chat-Look'}</span>
+        </div>
+      </div>
+
+      {allowInherit ? (
+        <button
+          type="button"
+          className={`background-inherit-button ${inherited ? 'active' : ''}`}
+          disabled={disabled}
+          onClick={() => onChange(null)}
+        >
+          <span aria-hidden="true">↺</span>
+          Global verwenden
+        </button>
+      ) : null}
+
+      <div className="background-mode-tabs" aria-label="Hintergrundtyp">
+        {[
+          { mode: 'preset', label: 'Preset', icon: '✦' },
+          { mode: 'solid', label: 'Farbe', icon: '●' },
+          { mode: 'gradient', label: 'Verlauf', icon: '◒' },
+          { mode: 'image', label: 'Bild', icon: '▣' }
+        ].map((item) => (
+          <button
+            key={item.mode}
+            type="button"
+            className={!inherited && activeStyle.mode === item.mode ? 'active' : ''}
+            disabled={disabled}
+            onClick={() => setMode(item.mode as AppChatBackgroundStyle['mode'])}
+          >
+            <span aria-hidden="true">{item.icon}</span>
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      {!inherited && activeStyle.mode === 'preset' ? (
+        <div className="background-choice-grid">
+          {BACKGROUND_PRESETS.map((preset) => (
+            <button
+              key={preset.value}
+              type="button"
+              className={`background-choice-card ${activeStyle.preset === preset.value ? 'active' : ''}`}
+              disabled={disabled}
+              onClick={() => patchStyle({ mode: 'preset', preset: preset.value })}
+            >
+              <span className="background-choice-swatch" style={profileThemePreviewStyle(preset.value)} aria-hidden="true">
+                {preset.icon}
+              </span>
+              <span className="background-choice-copy">
+                <span>{preset.label}</span>
+                <small>{activeStyle.preset === preset.value ? 'Aktiv' : 'Preset'}</small>
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {!inherited && activeStyle.mode === 'solid' ? (
+        <div className="background-field-grid">
+          <label>
+            <span>Farbe</span>
+            <input className="glass-input h-11" type="color" value={activeStyle.color ?? '#0f172a'} disabled={disabled} onChange={(event) => patchStyle({ mode: 'solid', color: event.target.value })} />
+          </label>
+        </div>
+      ) : null}
+
+      {!inherited && activeStyle.mode === 'gradient' ? (
+        <div className="background-field-grid">
+          <label>
+            <span>Von</span>
+            <input className="glass-input h-11" type="color" value={activeStyle.gradientFrom ?? '#1a2740'} disabled={disabled} onChange={(event) => patchStyle({ mode: 'gradient', gradientFrom: event.target.value })} />
+          </label>
+          <label>
+            <span>Bis</span>
+            <input className="glass-input h-11" type="color" value={activeStyle.gradientTo ?? '#020617'} disabled={disabled} onChange={(event) => patchStyle({ mode: 'gradient', gradientTo: event.target.value })} />
+          </label>
+          <label className="sm:col-span-2">
+            <span>Winkel {activeStyle.gradientAngle ?? 145}°</span>
+            <input className="w-full accent-sky-300" type="range" min="0" max="360" value={activeStyle.gradientAngle ?? 145} disabled={disabled} onChange={(event) => patchStyle({ mode: 'gradient', gradientAngle: Number(event.target.value) })} />
+          </label>
+        </div>
+      ) : null}
+
+      {!inherited && activeStyle.mode === 'image' ? (
+        <div className="background-field-grid">
+          <label className="sm:col-span-2">
+            <span>Bild-URL</span>
+            <input className="glass-input text-sm" placeholder="https://..." value={activeStyle.imageUrl ?? ''} disabled={disabled} onChange={(event) => patchStyle({ mode: 'image', imageUrl: event.target.value })} />
+          </label>
+          <label className="sm:col-span-2">
+            <span>Abdunklung {activeStyle.imageDim ?? 58}%</span>
+            <input className="w-full accent-sky-300" type="range" min="0" max="88" value={activeStyle.imageDim ?? 58} disabled={disabled} onChange={(event) => patchStyle({ mode: 'image', imageDim: Number(event.target.value) })} />
+          </label>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 async function loadImageFromUrl(url: string): Promise<HTMLImageElement> {
@@ -251,7 +442,9 @@ export default function ProfilePage() {
   const [profileBio, setProfileBio] = useState('');
   const [profileEmail, setProfileEmail] = useState('');
   const [profileAccentColor, setProfileAccentColor] = useState('#38bdf8');
-  const [profileChatBackground, setProfileChatBackground] = useState<ChatBackgroundPreset>('aurora');
+  const [profileChatBackgroundStyle, setProfileChatBackgroundStyle] = useState<AppChatBackgroundStyle>(DEFAULT_BACKGROUND_STYLE);
+  const [selectedBackgroundChatId, setSelectedBackgroundChatId] = useState('');
+  const [chatBackgroundOverrides, setChatBackgroundOverrides] = useState<Record<string, AppChatBackgroundStyle | null>>({});
   const [nicknameSlots, setNicknameSlots] = useState<Array<{ id?: string; nickname: string; scope: NicknameScope; chatId: string | null }>>([
     { nickname: '', scope: 'global', chatId: null }
   ]);
@@ -287,6 +480,8 @@ export default function ProfilePage() {
   const outgoing = bootstrap?.outgoingRequests ?? [];
   const socialRequestCount = incoming.length + outgoing.length;
   const activeNicknameCount = nicknameSlots.filter((slot) => slot.nickname.trim()).length;
+  const selectedBackgroundChat = bootstrap?.chats.find((chat) => chat.id === selectedBackgroundChatId) ?? bootstrap?.chats[0] ?? null;
+  const selectedBackgroundOverride = selectedBackgroundChat ? chatBackgroundOverrides[selectedBackgroundChat.id] ?? null : null;
   const globalNicknamePreview =
     nicknameSlots.find((slot) => slot.scope === 'global' && slot.nickname.trim())?.nickname ||
     `${profileFirstName} ${profileLastName}`.trim() ||
@@ -314,7 +509,15 @@ export default function ProfilePage() {
       setProfileBio(payload.me.bio ?? '');
       setProfileEmail(payload.me.email ?? '');
       setProfileAccentColor(payload.me.accentColor ?? '#38bdf8');
-      setProfileChatBackground(payload.me.chatBackground ?? 'aurora');
+      setProfileChatBackgroundStyle(completeBackgroundStyle(payload.me.chatBackgroundStyle ?? { mode: 'preset', preset: payload.me.chatBackground ?? 'aurora' }));
+      setSelectedBackgroundChatId(payload.activeChatId ?? payload.chats[0]?.id ?? '');
+      const nextBackgroundOverrides: Record<string, AppChatBackgroundStyle | null> = {};
+      for (const chat of payload.chats) {
+        nextBackgroundOverrides[chat.id] =
+          chat.preferences.chatBackgroundStyle ??
+          (chat.preferences.chatBackground ? { mode: 'preset', preset: chat.preferences.chatBackground } : null);
+      }
+      setChatBackgroundOverrides(nextBackgroundOverrides);
       const preferences = payload.preferences ?? DEFAULT_USER_PREFERENCES;
       setDesktopNotifications(preferences.desktopNotifications);
       setPlayMentionSound(preferences.playMentionSound);
@@ -427,7 +630,7 @@ export default function ProfilePage() {
     setInfo(null);
 
     try {
-      const [profilePayload, preferencesPayload] = (await Promise.all([
+      await Promise.all([
         api('/api/app/profile/me', token, {
           method: 'PATCH',
           body: JSON.stringify({
@@ -436,7 +639,8 @@ export default function ProfilePage() {
             bio: profileBio,
             email: profileEmail,
             accentColor: profileAccentColor,
-            chatBackground: profileChatBackground,
+            chatBackground: backgroundPresetFromStyle(profileChatBackgroundStyle),
+            chatBackgroundStyle: profileChatBackgroundStyle,
             nicknameSlots: nicknameSlots
               .map((slot) => ({
                 id: slot.id ?? null,
@@ -456,18 +660,20 @@ export default function ProfilePage() {
             showReadReceipts,
             expandArchivedChats
           })
-        })
-      ])) as [{ profile: AppUserProfile }, { preferences: AppUserPreferences }];
+        }),
+        ...Object.entries(chatBackgroundOverrides).map(([chatId, backgroundStyle]) =>
+          api('/api/app/chats/preferences', token, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              chatId,
+              chatBackground: backgroundStyle?.mode === 'preset' ? backgroundStyle.preset ?? 'aurora' : null,
+              chatBackgroundStyle: backgroundStyle
+            })
+          })
+        )
+      ]);
 
-      setBootstrap((prev) => (
-        prev
-          ? {
-              ...prev,
-              me: profilePayload.profile,
-              preferences: preferencesPayload.preferences
-            }
-          : prev
-      ));
+      await loadBootstrap(token, bootstrap?.activeChatId ?? undefined);
       setInfo('Profil und Chat-Einstellungen gespeichert.');
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Speichern fehlgeschlagen.');
@@ -718,7 +924,7 @@ export default function ProfilePage() {
                     <p className="mt-3 max-w-sm text-sm text-slate-100/90">{profileBio.trim() || 'Richte dein Profil so ein, wie andere dich im Chat wahrnehmen sollen.'}</p>
                     <div className="mt-4 flex flex-wrap gap-2 text-[11px]">
                       <span className="rounded-full border px-2.5 py-1 text-slate-100" style={{ borderColor: hexToRgba(profileAccentColor, 0.34), background: hexToRgba(profileAccentColor, 0.14) }}>
-                        Theme {themeLabel(profileChatBackground)}
+                        Hintergrund {backgroundStyleLabel(profileChatBackgroundStyle)}
                       </span>
                       <span className="rounded-full border border-slate-700/70 bg-slate-950/45 px-2.5 py-1 text-slate-200">
                         {activeNicknameCount}/3 Nicknames aktiv
@@ -989,23 +1195,65 @@ export default function ProfilePage() {
                       </div>
                     </div>
 
-                    <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                      {BACKGROUND_PRESETS.map((preset) => (
-                        <button
-                          key={preset.value}
-                          type="button"
-                          className="rounded-[1.2rem] border p-4 text-left transition"
-                          style={{
-                            ...profileThemePreviewStyle(preset.value),
-                            borderColor: profileChatBackground === preset.value ? hexToRgba(profileAccentColor, 0.46) : 'rgba(148,163,184,0.18)',
-                            boxShadow: profileChatBackground === preset.value ? `0 0 0 1px ${hexToRgba(profileAccentColor, 0.24)} inset` : undefined
-                          }}
-                          onClick={() => setProfileChatBackground(preset.value)}
-                        >
-                          <p className="text-sm font-semibold text-slate-100">{preset.label}</p>
-                          <p className="mt-1 text-xs text-slate-300">Persönlicher Bühnenlook für deinen Chat.</p>
-                        </button>
-                      ))}
+                    <div className="background-settings-stack mt-4">
+                      <section className="background-picker-card">
+                        <div className="background-picker-head">
+                          <div>
+                            <h3 className="text-sm font-semibold text-slate-100">Globaler Chat-Hintergrund</h3>
+                            <p className="surface-muted mt-1 text-xs">Gilt für alle Chats ohne eigenen Override.</p>
+                          </div>
+                          <span className="background-picker-current" style={profileThemePreviewStyle(profileChatBackgroundStyle)} aria-hidden="true" />
+                        </div>
+                        <BackgroundDesigner
+                          value={profileChatBackgroundStyle}
+                          disabled={isBusy}
+                          onChange={(next) => setProfileChatBackgroundStyle(completeBackgroundStyle(next))}
+                        />
+                      </section>
+
+                      <section className="background-picker-card">
+                        <div className="background-picker-head">
+                          <div>
+                            <h3 className="text-sm font-semibold text-slate-100">Chat-spezifischer Hintergrund</h3>
+                            <p className="surface-muted mt-1 text-xs">Wird nur hier in den Einstellungen gepflegt.</p>
+                          </div>
+                          <span className="background-picker-current" style={profileThemePreviewStyle(selectedBackgroundOverride ?? profileChatBackgroundStyle)} aria-hidden="true" />
+                        </div>
+
+                        <label className="mt-3 block">
+                          <span className="surface-muted mb-1 block text-xs uppercase tracking-wide">Chat</span>
+                          <select
+                            className="glass-input text-sm"
+                            value={selectedBackgroundChat?.id ?? ''}
+                            onChange={(event) => setSelectedBackgroundChatId(event.target.value)}
+                          >
+                            {(bootstrap?.chats ?? []).map((chat) => (
+                              <option key={chat.id} value={chat.id}>
+                                {chat.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        {selectedBackgroundChat ? (
+                          <div className="mt-3">
+                            <BackgroundDesigner
+                              value={selectedBackgroundOverride}
+                              fallback={profileChatBackgroundStyle}
+                              allowInherit
+                              disabled={isBusy}
+                              onChange={(next) =>
+                                setChatBackgroundOverrides((prev) => ({
+                                  ...prev,
+                                  [selectedBackgroundChat.id]: next
+                                }))
+                              }
+                            />
+                          </div>
+                        ) : (
+                          <p className="surface-muted mt-3 text-sm">Kein Chat verfügbar.</p>
+                        )}
+                      </section>
                     </div>
                   </div>
 
@@ -1361,7 +1609,7 @@ export default function ProfilePage() {
                         background: hexToRgba(profileCard.accentColor, 0.14)
                       }}
                     >
-                      Theme {themeLabel(profileCard.chatBackground)}
+                      Hintergrund {backgroundStyleLabel(profileCard.chatBackgroundStyle ?? { mode: 'preset', preset: profileCard.chatBackground ?? 'aurora' })}
                     </span>
                     {profileCard.legalName ? (
                       <span className="rounded-full border border-slate-700/70 bg-slate-950/45 px-2 py-1 text-slate-200">

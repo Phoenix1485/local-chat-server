@@ -1,8 +1,8 @@
 import { requireSession } from '@/lib/appAuth';
 import { enforceSameOrigin, isUuid, jsonError } from '@/lib/http';
 import { socialStore } from '@/lib/socialStore';
-import { validateThemePreset } from '@/lib/validation';
-import type { ChatBackgroundPreset } from '@/types/social';
+import { normalizeChatBackgroundStyle, validateChatBackgroundStyle, validateThemePreset } from '@/lib/validation';
+import type { AppChatBackgroundStyle, ChatBackgroundPreset } from '@/types/social';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,6 +12,7 @@ type UpdateChatPreferencesPayload = {
   archived?: boolean;
   notificationMode?: 'mentions' | 'mute';
   chatBackground?: ChatBackgroundPreset | null;
+  chatBackgroundStyle?: AppChatBackgroundStyle | null;
 };
 
 export async function PATCH(request: Request): Promise<Response> {
@@ -68,7 +69,24 @@ export async function PATCH(request: Request): Promise<Response> {
     }
   }
 
-  if (next.archived === undefined && next.notificationMode === undefined && next.chatBackground === undefined) {
+  if (payload.chatBackgroundStyle !== undefined) {
+    if (payload.chatBackgroundStyle === null) {
+      next.chatBackgroundStyle = null;
+    } else {
+      const backgroundStyleError = validateChatBackgroundStyle(payload.chatBackgroundStyle);
+      if (backgroundStyleError) {
+        return jsonError(backgroundStyleError, 422);
+      }
+      next.chatBackgroundStyle = normalizeChatBackgroundStyle(payload.chatBackgroundStyle);
+    }
+  }
+
+  if (
+    next.archived === undefined &&
+    next.notificationMode === undefined &&
+    next.chatBackground === undefined &&
+    next.chatBackgroundStyle === undefined
+  ) {
     return jsonError('No chat preference changes supplied.', 422);
   }
 
@@ -76,7 +94,8 @@ export async function PATCH(request: Request): Promise<Response> {
     const chat = await socialStore.updateChatPreferences(auth.session.user.id, chatId, {
       archived: next.archived,
       notificationMode: next.notificationMode,
-      chatBackground: next.chatBackground
+      chatBackground: next.chatBackground,
+      chatBackgroundStyle: next.chatBackgroundStyle
     });
     return Response.json({ chat });
   } catch (error) {

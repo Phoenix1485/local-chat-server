@@ -4,6 +4,19 @@ export type GroupMemberRole = 'owner' | 'admin' | 'moderator' | 'member';
 
 export type ChatBackgroundPreset = 'aurora' | 'sunset' | 'midnight' | 'forest' | 'paper';
 
+export type ChatBackgroundMode = 'preset' | 'solid' | 'gradient' | 'image';
+
+export type AppChatBackgroundStyle = {
+  mode: ChatBackgroundMode;
+  preset?: ChatBackgroundPreset;
+  color?: string;
+  gradientFrom?: string;
+  gradientTo?: string;
+  gradientAngle?: number;
+  imageUrl?: string;
+  imageDim?: number;
+};
+
 export type NicknameScope = 'global' | 'chat';
 
 export type ChatKind = 'global' | 'group' | 'direct';
@@ -31,6 +44,7 @@ export type AppUserProfile = {
   role: GlobalRole;
   accentColor?: string;
   chatBackground?: ChatBackgroundPreset;
+  chatBackgroundStyle?: AppChatBackgroundStyle | null;
   nicknameSlots?: AppNicknameSlot[];
   isFriend?: boolean;
 };
@@ -55,6 +69,7 @@ export type AppChatPreferences = {
   archived: boolean;
   notificationMode: AppChatNotificationMode;
   chatBackground: ChatBackgroundPreset | null;
+  chatBackgroundStyle: AppChatBackgroundStyle | null;
 };
 
 export type FriendRequestState = 'pending' | 'accepted' | 'declined' | 'cancelled';

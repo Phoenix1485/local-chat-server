@@ -231,6 +231,7 @@ async function createSchema(): Promise<void> {
       is_archived TINYINT(1) NOT NULL DEFAULT 0,
       notification_mode ENUM('mentions','mute') NOT NULL DEFAULT 'mentions',
       chat_background ENUM('aurora','sunset','midnight','forest','paper') NULL,
+      chat_background_style_json TEXT NULL,
       created_at BIGINT NOT NULL,
       updated_at BIGINT NOT NULL,
       PRIMARY KEY (chat_id, user_id),
@@ -329,6 +330,7 @@ async function createSchema(): Promise<void> {
       global_role ENUM('user','admin','superadmin') NOT NULL DEFAULT 'user',
       accent_color CHAR(7) NOT NULL DEFAULT '#38bdf8',
       chat_background ENUM('aurora','sunset','midnight','forest','paper') NOT NULL DEFAULT 'aurora',
+      chat_background_style_json TEXT NULL,
       avatar_blob LONGBLOB NULL,
       avatar_mime VARCHAR(255) NULL,
       avatar_updated_at BIGINT NULL,
@@ -573,8 +575,14 @@ async function createSchema(): Promise<void> {
   if (!(await hasColumn(pool, 'auth_accounts', 'chat_background'))) {
     await pool.query("ALTER TABLE auth_accounts ADD COLUMN chat_background ENUM('aurora','sunset','midnight','forest','paper') NOT NULL DEFAULT 'aurora' AFTER accent_color");
   }
+  if (!(await hasColumn(pool, 'auth_accounts', 'chat_background_style_json'))) {
+    await pool.query('ALTER TABLE auth_accounts ADD COLUMN chat_background_style_json TEXT NULL AFTER chat_background');
+  }
   if (!(await hasColumn(pool, 'chat_member_preferences', 'chat_background'))) {
     await pool.query("ALTER TABLE chat_member_preferences ADD COLUMN chat_background ENUM('aurora','sunset','midnight','forest','paper') NULL AFTER notification_mode");
+  }
+  if (!(await hasColumn(pool, 'chat_member_preferences', 'chat_background_style_json'))) {
+    await pool.query('ALTER TABLE chat_member_preferences ADD COLUMN chat_background_style_json TEXT NULL AFTER chat_background');
   }
   if (!(await hasColumn(pool, 'auth_sessions', 'ip_norm'))) {
     await pool.query("ALTER TABLE auth_sessions ADD COLUMN ip_norm VARCHAR(128) NOT NULL DEFAULT '' AFTER user_agent");
