@@ -647,6 +647,8 @@ export default function ChatPage() {
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
   const [showEmojiPanel, setShowEmojiPanel] = useState(false);
+  const [showMessageFilterMenu, setShowMessageFilterMenu] = useState(false);
+  const [showComposerActionMenu, setShowComposerActionMenu] = useState(false);
   const [emojiCategory, setEmojiCategory] = useState(EMOJI_CATEGORIES[0].key);
   const [emojiTargetMessageId, setEmojiTargetMessageId] = useState<string | null>(null);
   const [actionMenuMessageId, setActionMenuMessageId] = useState<string | null>(null);
@@ -685,6 +687,8 @@ export default function ChatPage() {
   const inviteCodeInputRef = useRef<HTMLInputElement | null>(null);
   const messageSearchInputRef = useRef<HTMLInputElement | null>(null);
   const composerInputRef = useRef<HTMLInputElement | null>(null);
+  const messageFilterMenuRef = useRef<HTMLDivElement | null>(null);
+  const composerActionMenuRef = useRef<HTMLDivElement | null>(null);
   const groupManageModalRef = useRef<HTMLDivElement | null>(null);
   const groupCreateModalRef = useRef<HTMLDivElement | null>(null);
   const gifModalRef = useRef<HTMLDivElement | null>(null);
@@ -870,6 +874,12 @@ export default function ChatPage() {
     void loadModerationReports(reportStatusFilter);
   }, [groupSettings?.canViewModerationLogs, reportStatusFilter, showGroupManageModal]);
   const normalizedMessageSearchQuery = messageSearchQuery.trim().toLowerCase();
+  const activeMessageFilterCount = [
+    normalizedMessageSearchQuery.length > 0,
+    messageSenderFilter !== 'all',
+    showPinnedOnly
+  ].filter(Boolean).length;
+  const hasActiveMessageFilters = activeMessageFilterCount > 0;
   const pinnedMessages = useMemo(
     () => messages.filter((message) => message.isPinned).sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0)),
     [messages]
@@ -1407,7 +1417,7 @@ export default function ChatPage() {
   }, [activeChatId, token]);
 
   useEffect(() => {
-    if (!showGroupModal && !showGroupManageModal && !showGifModal && !showPollModal && !showShortcutModal && !showEmojiPanel) {
+    if (!showGroupModal && !showGroupManageModal && !showGifModal && !showPollModal && !showShortcutModal && !showEmojiPanel && !showMessageFilterMenu && !showComposerActionMenu) {
       return;
     }
 
@@ -1419,6 +1429,8 @@ export default function ChatPage() {
         setShowPollModal(false);
         setShowShortcutModal(false);
         setShowEmojiPanel(false);
+        setShowMessageFilterMenu(false);
+        setShowComposerActionMenu(false);
       }
     };
 
@@ -1426,7 +1438,41 @@ export default function ChatPage() {
     return () => {
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [showGroupModal, showGroupManageModal, showGifModal, showPollModal, showShortcutModal, showEmojiPanel]);
+  }, [showGroupModal, showGroupManageModal, showGifModal, showPollModal, showShortcutModal, showEmojiPanel, showMessageFilterMenu, showComposerActionMenu]);
+
+  useEffect(() => {
+    if (!showMessageFilterMenu && !showComposerActionMenu) {
+      return;
+    }
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) {
+        return;
+      }
+      if (showMessageFilterMenu && !messageFilterMenuRef.current?.contains(target)) {
+        setShowMessageFilterMenu(false);
+      }
+      if (showComposerActionMenu && !composerActionMenuRef.current?.contains(target)) {
+        setShowComposerActionMenu(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [showMessageFilterMenu, showComposerActionMenu]);
+
+  useEffect(() => {
+    if (!showMessageFilterMenu) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      messageSearchInputRef.current?.focus();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [showMessageFilterMenu]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1441,7 +1487,7 @@ export default function ChatPage() {
 
       if (withMod && key === 'k') {
         event.preventDefault();
-        messageSearchInputRef.current?.focus();
+        setShowMessageFilterMenu(true);
         return;
       }
 
@@ -1482,12 +1528,7 @@ export default function ChatPage() {
 
       if (withMod && event.shiftKey && key === 'f') {
         event.preventDefault();
-        setGifQuery('');
-        setGifResults([]);
-        setGifNextCursor(null);
-        setGifLoading(false);
-        setActiveGifCategory('');
-        setShowGifModal(true);
+        openGifPicker();
         return;
       }
 
@@ -1882,6 +1923,17 @@ export default function ChatPage() {
   const clearPoll = () => {
     setPollQuestion('');
     setPollOptions(['', '']);
+  };
+
+  const openGifPicker = () => {
+    setGifQuery('');
+    setGifResults([]);
+    setGifNextCursor(null);
+    setGifLoading(false);
+    setActiveGifCategory('');
+    setShowComposerActionMenu(false);
+    setShowEmojiPanel(false);
+    setShowGifModal(true);
   };
 
   const selectGif = (gif: TenorResult) => {
@@ -2905,50 +2957,132 @@ export default function ChatPage() {
                 {activeChat?.preferences.notificationMode === 'mute' ? ' · stumm' : ''}
               </p>
             </div>
-            <div className="hidden items-center gap-2 text-xs text-slate-300 sm:flex">
-              {activeChat ? (
+            <div className="chat-header-actions">
+              <div ref={messageFilterMenuRef} className="chat-filter-wrap">
                 <button
-                  className="btn-soft px-2 py-1 text-xs"
-                  onClick={() =>
-                    void updateChatPreferences(
-                      {
-                        notificationMode: activeChat.preferences.notificationMode === 'mute' ? 'mentions' : 'mute'
-                      },
-                      activeChat.preferences.notificationMode === 'mute' ? 'Chat wieder auf Erwähnungen gestellt.' : 'Chat stummgeschaltet.'
-                    )
-                  }
+                  className={`icon-btn chat-filter-button ${hasActiveMessageFilters ? 'active' : ''}`}
+                  type="button"
+                  aria-label="Nachrichtenfilter öffnen"
+                  aria-expanded={showMessageFilterMenu}
+                  title="Nachrichten filtern"
+                  onClick={() => setShowMessageFilterMenu((prev) => !prev)}
                 >
-                  {activeChat.preferences.notificationMode === 'mute' ? 'Erwähnungen an' : 'Stumm'}
+                  <span aria-hidden="true">⌕</span>
+                  {activeMessageFilterCount > 0 ? <span className="filter-count">{activeMessageFilterCount}</span> : null}
                 </button>
-              ) : null}
-              {activeChat ? (
-                <button
-                  className="btn-soft px-2 py-1 text-xs"
-                  onClick={() =>
-                    void updateChatPreferences(
-                      {
-                        archived: !activeChat.preferences.archived
-                      },
-                      activeChat.preferences.archived ? 'Chat aus dem Archiv geholt.' : 'Chat archiviert.'
-                    )
-                  }
-                >
-                  {activeChat.preferences.archived ? 'Aus Archiv holen' : 'Archivieren'}
+                <AnimatePresence>
+                  {showMessageFilterMenu ? (
+                    <motion.div
+                      className="chat-filter-menu"
+                      initial={{ opacity: 0, y: -8, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                      transition={{ duration: 0.16 }}
+                    >
+                      <div className="chat-filter-head">
+                        <div>
+                          <p className="text-xs font-semibold text-slate-100">Nachrichtenfilter</p>
+                          <p className="surface-muted text-[11px]">{filteredMessages.length} von {messages.length} Nachrichten</p>
+                        </div>
+                        <button className="icon-btn small" type="button" aria-label="Filter schließen" onClick={() => setShowMessageFilterMenu(false)}>
+                          ×
+                        </button>
+                      </div>
+                      <label className="chat-filter-field">
+                        <span>Suche</span>
+                        <input
+                          ref={messageSearchInputRef}
+                          className="glass-input text-xs"
+                          placeholder="Text, Datei oder Person"
+                          value={messageSearchQuery}
+                          onChange={(event) => setMessageSearchQuery(event.target.value)}
+                        />
+                      </label>
+                      <label className="chat-filter-field">
+                        <span>Sender</span>
+                        <select className="glass-input text-xs" value={messageSenderFilter} onChange={(event) => setMessageSenderFilter(event.target.value)}>
+                          <option value="all">Alle Sender</option>
+                          {members.map((member) => (
+                            <option key={member.user.id} value={member.user.id}>
+                              {member.user.fullName}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        className={`filter-toggle ${showPinnedOnly ? 'active' : ''}`}
+                        type="button"
+                        onClick={() => setShowPinnedOnly((prev) => !prev)}
+                      >
+                        <span aria-hidden="true">⌘</span>
+                        Nur angepinnte Nachrichten
+                      </button>
+                      <div className="chat-filter-foot">
+                        <button
+                          className="btn-soft px-3 py-1 text-xs"
+                          type="button"
+                          disabled={!hasActiveMessageFilters}
+                          onClick={() => {
+                            setMessageSearchQuery('');
+                            setMessageSenderFilter('all');
+                            setShowPinnedOnly(false);
+                          }}
+                        >
+                          Zurücksetzen
+                        </button>
+                      </div>
+                    </motion.div>
+                  ) : null}
+                </AnimatePresence>
+              </div>
+
+              <div className="hidden items-center gap-2 text-xs text-slate-300 sm:flex">
+                {activeChat ? (
+                  <button
+                    className="btn-soft px-2 py-1 text-xs"
+                    title="Benachrichtigungen"
+                    onClick={() =>
+                      void updateChatPreferences(
+                        {
+                          notificationMode: activeChat.preferences.notificationMode === 'mute' ? 'mentions' : 'mute'
+                        },
+                        activeChat.preferences.notificationMode === 'mute' ? 'Chat wieder auf Erwähnungen gestellt.' : 'Chat stummgeschaltet.'
+                      )
+                    }
+                  >
+                    <span aria-hidden="true">◌</span> {activeChat.preferences.notificationMode === 'mute' ? 'Erwähnungen an' : 'Stumm'}
+                  </button>
+                ) : null}
+                {activeChat ? (
+                  <button
+                    className="btn-soft px-2 py-1 text-xs"
+                    title="Archiv"
+                    onClick={() =>
+                      void updateChatPreferences(
+                        {
+                          archived: !activeChat.preferences.archived
+                        },
+                        activeChat.preferences.archived ? 'Chat aus dem Archiv geholt.' : 'Chat archiviert.'
+                      )
+                    }
+                  >
+                    <span aria-hidden="true">▣</span> {activeChat.preferences.archived ? 'Aus Archiv holen' : 'Archivieren'}
+                  </button>
+                ) : null}
+                <button className="btn-soft px-2 py-1 text-xs" title="Shortcuts" onClick={() => setShowShortcutModal(true)}>
+                  <span aria-hidden="true">?</span> Shortcuts
                 </button>
-              ) : null}
-              <button className="btn-soft px-2 py-1 text-xs" onClick={() => setShowShortcutModal(true)}>
-                ? Shortcuts
-              </button>
-              {firstUnreadMessageId && unreadCountAtOpen > 0 ? (
-                <button className="btn-soft px-2 py-1 text-xs" onClick={jumpToFirstUnread}>
-                  Zum ersten Ungelesenen ({unreadCountAtOpen})
-                </button>
-              ) : null}
-              {context?.chat.kind === 'group' ? (
-                <button className="btn-soft px-2 py-1 text-xs" onClick={openGroupManagementModal}>
-                  Übersicht & Einstellungen
-                </button>
-              ) : null}
+                {firstUnreadMessageId && unreadCountAtOpen > 0 ? (
+                  <button className="btn-soft px-2 py-1 text-xs" onClick={jumpToFirstUnread}>
+                    <span aria-hidden="true">↓</span> Ungelesen ({unreadCountAtOpen})
+                  </button>
+                ) : null}
+                {context?.chat.kind === 'group' ? (
+                  <button className="btn-soft px-2 py-1 text-xs" onClick={openGroupManagementModal}>
+                    <span aria-hidden="true">⚙</span> Übersicht
+                  </button>
+                ) : null}
+              </div>
             </div>
           </header>
 
@@ -2973,31 +3107,6 @@ export default function ChatPage() {
               {connectionState === 'offline' ? 'Du bist offline. Nachrichten werden gesendet, sobald die Verbindung wieder da ist.' : 'Verbindung wird wiederhergestellt...'}
             </motion.div>
           ) : null}
-
-          <div className="px-3 pb-2">
-            <div className="glass-card rounded-lg p-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  ref={messageSearchInputRef}
-                  className="glass-input min-w-[12rem] flex-1 text-xs"
-                  placeholder="Nachrichten durchsuchen..."
-                  value={messageSearchQuery}
-                  onChange={(event) => setMessageSearchQuery(event.target.value)}
-                />
-                <select className="glass-input text-xs" value={messageSenderFilter} onChange={(event) => setMessageSenderFilter(event.target.value)}>
-                  <option value="all">Alle Sender</option>
-                  {members.map((member) => (
-                    <option key={member.user.id} value={member.user.id}>
-                      {member.user.fullName}
-                    </option>
-                  ))}
-                </select>
-                <button className={`btn-soft px-2 py-1 text-xs ${showPinnedOnly ? 'border-indigo-400/70 text-indigo-100' : ''}`} type="button" onClick={() => setShowPinnedOnly((prev) => !prev)}>
-                  Nur Angepinnte
-                </button>
-              </div>
-            </div>
-          </div>
 
           <motion.div ref={messageListRef} className="message-list" onClick={() => setActionMenuMessageId(null)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3, delay: 0.2 }}>
             {filteredMessages.map((message, index) => {
@@ -3270,80 +3379,33 @@ export default function ChatPage() {
 
           <motion.form onSubmit={sendMessage} className="chat-composer" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
             <div className="glass-card rounded-xl p-2">
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.98 }} className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => fileInputRef.current?.click()}>
-                  Datei/Bild
-                </motion.button>
-                <button
-                  className="btn-soft px-2 py-1 text-xs"
-                  type="button"
-                  onClick={() => {
-                    setEmojiTargetMessageId(null);
-                    setShowEmojiPanel((prev) => !prev);
-                  }}
-                >
-                  Emoji
-                </button>
-                <button
-                  className="btn-soft px-2 py-1 text-xs"
-                  type="button"
-                  onClick={() => {
-                    setGifQuery('');
-                    setGifResults([]);
-                    setGifNextCursor(null);
-                    setGifLoading(false);
-                    setActiveGifCategory('');
-                    setShowGifModal(true);
-                  }}
-                >
-                  GIF
-                </button>
-                <button
-                  className="btn-soft px-2 py-1 text-xs"
-                  type="button"
-                  onClick={() => {
-                    setShowPollModal(true);
-                  }}
-                >
-                  Umfrage
-                </button>
-                {context?.chat.kind === 'global' && (me?.role === 'admin' || me?.role === 'superadmin') ? (
-                  <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => appendMentionToken('@everyone')}>
-                    @everyone
-                  </button>
-                ) : null}
-                {context?.chat.kind === 'global' && (me?.role === 'admin' || me?.role === 'superadmin') ? (
-                  <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => appendMentionToken('@here')}>
-                    @here
-                  </button>
-                ) : null}
-                {context?.chat.kind === 'group' && groupSettings?.canUseEveryoneMention ? (
-                  <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => appendMentionToken('@everyone')}>
-                    @everyone
-                  </button>
-                ) : null}
-                {context?.chat.kind === 'group' && groupSettings?.canUseHereMention ? (
-                  <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => appendMentionToken('@here')}>
-                    @here
-                  </button>
-                ) : null}
-                {isUploading ? <span className="surface-muted text-xs">Upload läuft...</span> : null}
-                {isResolvingTenorLink ? <span className="surface-muted text-xs">Tenor-Link wird als GIF erkannt...</span> : null}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*,.pdf,.txt,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.exe,application/x-msdownload,application/x-msdos-program,application/vnd.microsoft.portable-executable,application/octet-stream"
-                  className="hidden"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0] ?? null;
-                    void uploadAttachment(file);
-                    event.currentTarget.value = '';
-                  }}
-                />
-              </div>
+              {(isUploading || isResolvingTenorLink) ? (
+                <div className="composer-status-row">
+                  {isUploading ? <span>Upload läuft...</span> : null}
+                  {isResolvingTenorLink ? <span>Tenor-Link wird als GIF erkannt...</span> : null}
+                </div>
+              ) : null}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,.pdf,.txt,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.exe,application/x-msdownload,application/x-msdos-program,application/vnd.microsoft.portable-executable,application/octet-stream"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  void uploadAttachment(file);
+                  event.currentTarget.value = '';
+                  setShowComposerActionMenu(false);
+                }}
+              />
 
               {showEmojiPanel ? (
                 <div className="emoji-panel mb-2">
+                  <div className="emoji-panel-head">
+                    <span>Emoji & GIF</span>
+                    <button className="btn-soft px-3 py-1 text-xs" type="button" onClick={openGifPicker}>
+                      GIF suchen
+                    </button>
+                  </div>
                   <div className="emoji-tabs">
                     {EMOJI_CATEGORIES.map((category) => (
                       <button
@@ -3443,10 +3505,76 @@ export default function ChatPage() {
                     ))}
                   </motion.div>
                 ) : null}
-                <div className="flex items-center gap-2">
+                <div className="composer-input-row">
+                  <div ref={composerActionMenuRef} className="composer-actions">
+                    <button
+                      className={`composer-icon-button ${showComposerActionMenu ? 'active' : ''}`}
+                      type="button"
+                      aria-label="Anhänge und Extras öffnen"
+                      aria-expanded={showComposerActionMenu}
+                      onClick={() => setShowComposerActionMenu((prev) => !prev)}
+                    >
+                      <span aria-hidden="true">＋</span>
+                    </button>
+                    <AnimatePresence>
+                      {showComposerActionMenu ? (
+                        <motion.div
+                          className="composer-action-menu"
+                          initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                          transition={{ duration: 0.16 }}
+                        >
+                          <button
+                            type="button"
+                            className="composer-action-item"
+                            onClick={() => {
+                              setEmojiTargetMessageId(null);
+                              setShowEmojiPanel((prev) => !prev);
+                              setShowComposerActionMenu(false);
+                            }}
+                          >
+                            <span className="composer-action-icon" aria-hidden="true">☺</span>
+                            <span>
+                              <span className="composer-action-title">Emoji & GIF</span>
+                              <span className="composer-action-subtitle">Reaktionen und GIF-Suche</span>
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            className="composer-action-item"
+                            onClick={() => {
+                              fileInputRef.current?.click();
+                              setShowComposerActionMenu(false);
+                            }}
+                          >
+                            <span className="composer-action-icon" aria-hidden="true">▣</span>
+                            <span>
+                              <span className="composer-action-title">Bild / Datei</span>
+                              <span className="composer-action-subtitle">Upload anhängen</span>
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            className="composer-action-item"
+                            onClick={() => {
+                              setShowPollModal(true);
+                              setShowComposerActionMenu(false);
+                            }}
+                          >
+                            <span className="composer-action-icon" aria-hidden="true">▤</span>
+                            <span>
+                              <span className="composer-action-title">Umfrage</span>
+                              <span className="composer-action-subtitle">Frage mit Optionen</span>
+                            </span>
+                          </button>
+                        </motion.div>
+                      ) : null}
+                    </AnimatePresence>
+                  </div>
                   <input
                     ref={composerInputRef}
-                    className="glass-input border-none bg-transparent text-sm shadow-none focus:shadow-none"
+                    className="glass-input composer-input border-none bg-transparent text-sm shadow-none focus:shadow-none"
                     placeholder={editingMessageId ? 'Nachricht bearbeiten...' : 'Nachricht schreiben...'}
                     value={text}
                     onFocus={() => setComposerFocused(true)}
@@ -3461,8 +3589,9 @@ export default function ChatPage() {
                     }}
                     maxLength={4000}
                   />
-                  <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }} className="btn-primary px-4 py-2 text-sm" type="submit">
-                    {editingMessageId ? 'Speichern' : 'Senden'}
+                  <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }} className="btn-primary composer-send-button px-4 py-2 text-sm" type="submit">
+                    <span aria-hidden="true">{editingMessageId ? '✓' : '➤'}</span>
+                    <span>{editingMessageId ? 'Speichern' : 'Senden'}</span>
                   </motion.button>
                 </div>
               </div>
