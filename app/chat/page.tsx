@@ -41,6 +41,14 @@ const DEFAULT_CHAT_PAGE_PREFERENCES: AppUserPreferences = {
   expandArchivedChats: false
 };
 
+const BACKGROUND_PRESETS: Array<{ value: ChatBackgroundPreset; label: string; icon: string }> = [
+  { value: 'aurora', label: 'Aurora', icon: '✦' },
+  { value: 'sunset', label: 'Sunset', icon: '◐' },
+  { value: 'midnight', label: 'Midnight', icon: '◒' },
+  { value: 'forest', label: 'Forest', icon: '◇' },
+  { value: 'paper', label: 'Paper', icon: '□' }
+];
+
 function initials(user: Pick<AppUserProfile, 'firstName' | 'lastName' | 'username'>): string {
   const a = user.firstName?.[0] ?? '';
   const b = user.lastName?.[0] ?? '';
@@ -707,6 +715,8 @@ export default function ChatPage() {
   const members = context?.members ?? [];
   const onlineMembersCount = members.filter((member) => member.isOnline).length;
   const groupSettings = context?.groupSettings ?? null;
+  const effectiveChatBackground = activeChat?.preferences.chatBackground ?? me?.chatBackground ?? 'aurora';
+  const activeChatUsesGlobalBackground = !activeChat?.preferences.chatBackground;
   const viewerComparableRole: GroupMemberRole | null =
     context?.chat.kind === 'group' ? (context.chat.memberRole ?? (me?.role === 'superadmin' ? 'owner' : null)) : null;
   const activeProfileMember =
@@ -2705,10 +2715,46 @@ export default function ChatPage() {
     }
   };
 
+  const updateGlobalChatBackground = async (chatBackground: ChatBackgroundPreset) => {
+    if (!token || !me) {
+      return;
+    }
+
+    setIsBusy(true);
+    setError(null);
+    try {
+      const payload = (await api('/api/app/profile/me', token, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          firstName: me.firstName,
+          lastName: me.lastName,
+          bio: me.bio ?? '',
+          email: me.email,
+          accentColor: me.accentColor ?? '#38bdf8',
+          chatBackground,
+          nicknameSlots: (me.nicknameSlots ?? []).map((slot) => ({
+            id: slot.id,
+            nickname: slot.nickname,
+            scope: slot.scope,
+            chatId: slot.chatId
+          }))
+        })
+      })) as { profile: AppUserProfile };
+
+      setBootstrap((prev) => (prev ? { ...prev, me: payload.profile } : prev));
+      setInfo('Globaler Chat-Hintergrund aktualisiert.');
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Globaler Hintergrund konnte nicht aktualisiert werden.');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
   const updateChatPreferences = async (
     updates: {
       archived?: boolean;
       notificationMode?: AppChatNotificationMode;
+      chatBackground?: ChatBackgroundPreset | null;
     },
     successMessage?: string
   ) => {
@@ -2889,7 +2935,7 @@ export default function ChatPage() {
     <>
       <motion.main
         className="discord-shell chat-page-shell comms-layout"
-        style={chatBackgroundStyle(me?.chatBackground)}
+        style={chatBackgroundStyle(effectiveChatBackground)}
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
@@ -3645,6 +3691,92 @@ export default function ChatPage() {
                     <option value="mute">Komplett stumm</option>
                   </select>
                 </label>
+
+                <div className="background-picker-card mt-3">
+                  <div className="background-picker-head">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-100">
+                        <span aria-hidden="true">◒</span> Hintergrund
+                      </p>
+                      <p className="surface-muted mt-1 text-[11px]">
+                        Aktiv: {themeLabel(effectiveChatBackground)}
+                        {activeChatUsesGlobalBackground ? ' · globaler Standard' : ' · nur dieser Chat'}
+                      </p>
+                    </div>
+                    <span className="background-picker-current" style={chatBackgroundStyle(effectiveChatBackground)} aria-hidden="true" />
+                  </div>
+
+                  <div className="mt-3">
+                    <p className="surface-muted mb-2 text-[11px] uppercase tracking-wide">Globaler Standard</p>
+                    <div className="background-choice-grid">
+                      {BACKGROUND_PRESETS.map((preset) => {
+                        const isActive = (me.chatBackground ?? 'aurora') === preset.value;
+                        return (
+                          <button
+                            key={`global-bg-${preset.value}`}
+                            type="button"
+                            className={`background-choice-card ${isActive ? 'active' : ''}`}
+                            disabled={isBusy}
+                            onClick={() => void updateGlobalChatBackground(preset.value)}
+                          >
+                            <span className="background-choice-swatch" style={chatBackgroundStyle(preset.value)} aria-hidden="true">
+                              {preset.icon}
+                            </span>
+                            <span className="background-choice-copy">
+                              <span>{preset.label}</span>
+                              <small>{isActive ? 'Aktiv' : 'Global'}</small>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="mt-4">
+                    <p className="surface-muted mb-2 text-[11px] uppercase tracking-wide">Nur dieser Chat</p>
+                    <div className="background-choice-grid">
+                      <button
+                        type="button"
+                        className={`background-choice-card background-choice-card-wide ${activeChatUsesGlobalBackground ? 'active' : ''}`}
+                        disabled={isBusy}
+                        onClick={() => void updateChatPreferences({ chatBackground: null }, 'Dieser Chat nutzt wieder den globalen Hintergrund.')}
+                      >
+                        <span className="background-choice-swatch" style={chatBackgroundStyle(me.chatBackground ?? 'aurora')} aria-hidden="true">
+                          ↺
+                        </span>
+                        <span className="background-choice-copy">
+                          <span>Global verwenden</span>
+                          <small>{themeLabel(me.chatBackground ?? 'aurora')}</small>
+                        </span>
+                      </button>
+                      {BACKGROUND_PRESETS.map((preset) => {
+                        const isActive = activeChat?.preferences.chatBackground === preset.value;
+                        return (
+                          <button
+                            key={`chat-bg-${preset.value}`}
+                            type="button"
+                            className={`background-choice-card ${isActive ? 'active' : ''}`}
+                            disabled={isBusy}
+                            onClick={() =>
+                              void updateChatPreferences(
+                                { chatBackground: preset.value },
+                                `Hintergrund für ${activeChat.name} aktualisiert.`
+                              )
+                            }
+                          >
+                            <span className="background-choice-swatch" style={chatBackgroundStyle(preset.value)} aria-hidden="true">
+                              {preset.icon}
+                            </span>
+                            <span className="background-choice-copy">
+                              <span>{preset.label}</span>
+                              <small>{isActive ? 'Aktiv' : 'Override'}</small>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
 
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   <button

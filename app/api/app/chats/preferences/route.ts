@@ -1,6 +1,8 @@
 import { requireSession } from '@/lib/appAuth';
 import { enforceSameOrigin, isUuid, jsonError } from '@/lib/http';
 import { socialStore } from '@/lib/socialStore';
+import { validateThemePreset } from '@/lib/validation';
+import type { ChatBackgroundPreset } from '@/types/social';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -9,6 +11,7 @@ type UpdateChatPreferencesPayload = {
   chatId?: string;
   archived?: boolean;
   notificationMode?: 'mentions' | 'mute';
+  chatBackground?: ChatBackgroundPreset | null;
 };
 
 export async function PATCH(request: Request): Promise<Response> {
@@ -50,14 +53,30 @@ export async function PATCH(request: Request): Promise<Response> {
     next.notificationMode = payload.notificationMode;
   }
 
-  if (next.archived === undefined && next.notificationMode === undefined) {
+  if (payload.chatBackground !== undefined) {
+    if (payload.chatBackground === null) {
+      next.chatBackground = null;
+    } else if (typeof payload.chatBackground === 'string') {
+      const chatBackground = payload.chatBackground.trim();
+      const backgroundError = validateThemePreset(chatBackground, ['aurora', 'sunset', 'midnight', 'forest', 'paper'] as const);
+      if (backgroundError) {
+        return jsonError(backgroundError, 422);
+      }
+      next.chatBackground = chatBackground as ChatBackgroundPreset;
+    } else {
+      return jsonError('Invalid chatBackground value.', 422);
+    }
+  }
+
+  if (next.archived === undefined && next.notificationMode === undefined && next.chatBackground === undefined) {
     return jsonError('No chat preference changes supplied.', 422);
   }
 
   try {
     const chat = await socialStore.updateChatPreferences(auth.session.user.id, chatId, {
       archived: next.archived,
-      notificationMode: next.notificationMode
+      notificationMode: next.notificationMode,
+      chatBackground: next.chatBackground
     });
     return Response.json({ chat });
   } catch (error) {

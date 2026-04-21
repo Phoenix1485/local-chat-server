@@ -230,6 +230,7 @@ async function createSchema(): Promise<void> {
       user_id CHAR(36) NOT NULL,
       is_archived TINYINT(1) NOT NULL DEFAULT 0,
       notification_mode ENUM('mentions','mute') NOT NULL DEFAULT 'mentions',
+      chat_background ENUM('aurora','sunset','midnight','forest','paper') NULL,
       created_at BIGINT NOT NULL,
       updated_at BIGINT NOT NULL,
       PRIMARY KEY (chat_id, user_id),
@@ -571,6 +572,9 @@ async function createSchema(): Promise<void> {
   }
   if (!(await hasColumn(pool, 'auth_accounts', 'chat_background'))) {
     await pool.query("ALTER TABLE auth_accounts ADD COLUMN chat_background ENUM('aurora','sunset','midnight','forest','paper') NOT NULL DEFAULT 'aurora' AFTER accent_color");
+  }
+  if (!(await hasColumn(pool, 'chat_member_preferences', 'chat_background'))) {
+    await pool.query("ALTER TABLE chat_member_preferences ADD COLUMN chat_background ENUM('aurora','sunset','midnight','forest','paper') NULL AFTER notification_mode");
   }
   if (!(await hasColumn(pool, 'auth_sessions', 'ip_norm'))) {
     await pool.query("ALTER TABLE auth_sessions ADD COLUMN ip_norm VARCHAR(128) NOT NULL DEFAULT '' AFTER user_agent");

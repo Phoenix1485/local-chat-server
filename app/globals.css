@@ -3084,6 +3084,136 @@ img.rounded-full,
   white-space: nowrap;
 }
 
+.background-picker-card {
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03)),
+    rgba(2, 8, 16, 0.36);
+  -webkit-backdrop-filter: blur(36px) saturate(168%);
+  backdrop-filter: blur(36px) saturate(168%);
+  border-radius: 1.35rem;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 18px 52px rgba(0, 0, 0, 0.26);
+  padding: 0.82rem;
+}
+
+.background-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+}
+
+.background-picker-current {
+  width: 3rem;
+  height: 3rem;
+  flex: 0 0 auto;
+  border-radius: 1.15rem;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 14px 32px rgba(0, 0, 0, 0.28);
+}
+
+.background-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.background-choice-card {
+  min-width: 0;
+  min-height: 3.35rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.02)),
+    rgba(5, 11, 22, 0.34);
+  color: rgba(244, 248, 252, 0.92);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.48rem;
+  text-align: left;
+  transition:
+    transform var(--motion-fast),
+    border-color var(--motion-fast),
+    background-color var(--motion-fast),
+    box-shadow var(--motion-fast);
+}
+
+.background-choice-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.18);
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.035)),
+    rgba(10, 19, 34, 0.42);
+}
+
+.background-choice-card.active {
+  border-color: rgba(198, 218, 255, 0.36);
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, 0.16), rgba(117, 156, 244, 0.12)),
+    rgba(20, 36, 64, 0.44);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 12px 28px rgba(55, 94, 168, 0.22);
+}
+
+.background-choice-card:disabled {
+  cursor: wait;
+  opacity: 0.62;
+  transform: none;
+}
+
+.background-choice-card-wide {
+  grid-column: 1 / -1;
+}
+
+.background-choice-swatch {
+  width: 2.22rem;
+  height: 2.22rem;
+  border-radius: 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.8rem;
+  font-weight: 800;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 10px 22px rgba(0, 0, 0, 0.22);
+}
+
+.background-choice-copy {
+  display: block;
+  min-width: 0;
+}
+
+.background-choice-copy span,
+.background-choice-copy small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.background-choice-copy span {
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.background-choice-copy small {
+  margin-top: 0.1rem;
+  color: rgba(210, 219, 230, 0.6);
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
 @media (max-width: 767px) {
   .chat-header-actions {
     gap: 0.35rem;
@@ -3116,6 +3246,10 @@ img.rounded-full,
   .composer-action-menu {
     left: -0.2rem;
     width: min(18rem, calc(100vw - 1.5rem));
+  }
+
+  .background-choice-grid {
+    grid-template-columns: 1fr;
   }
 }
 

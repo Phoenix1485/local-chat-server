@@ -98,6 +98,7 @@ type ChatSummaryRow = RowDataPacket & {
   mention_count: number;
   is_archived: number;
   notification_mode: AppChatNotificationMode;
+  chat_background: ChatBackgroundPreset | null;
 };
 
 type GroupChatControlRow = RowDataPacket & {
@@ -320,6 +321,7 @@ type ChatPreferenceRow = RowDataPacket & {
   user_id: string;
   is_archived: number;
   notification_mode: AppChatNotificationMode;
+  chat_background: ChatBackgroundPreset | null;
   created_at: number;
   updated_at: number;
 };
@@ -737,11 +739,17 @@ function mapUserPreferences(row?: Partial<UserPreferencesRow> | null): AppUserPr
 }
 
 function mapChatPreferences(
-  row?: { is_archived?: number | null; notification_mode?: AppChatNotificationMode | null } | null
+  row?: {
+    is_archived?: number | null;
+    notification_mode?: AppChatNotificationMode | null;
+    chat_background?: ChatBackgroundPreset | null;
+  } | null
 ): AppChatPreferences {
+  const chatBackground = row?.chat_background ? toChatBackgroundPreset(row.chat_background) : null;
   return {
     archived: asNumber(row?.is_archived, 0) === 1,
-    notificationMode: toChatNotificationMode(row?.notification_mode)
+    notificationMode: toChatNotificationMode(row?.notification_mode),
+    chatBackground
   };
 }
 
@@ -1904,6 +1912,7 @@ export class SocialStore {
           c.group_auto_hide_24h,
           COALESCE(cmp.is_archived, 0) AS is_archived,
           COALESCE(cmp.notification_mode, 'mentions') AS notification_mode,
+          cmp.chat_background AS chat_background,
           cm_user.member_role,
           COUNT(DISTINCT cm_all.user_id) AS members_count,
           MAX(m.created_at) AS last_message_at,
@@ -1972,6 +1981,7 @@ export class SocialStore {
           c.group_auto_hide_24h,
           cmp.is_archived,
           cmp.notification_mode,
+          cmp.chat_background,
           cm_user.user_id,
           cm_user.member_role,
           a_me.username
@@ -2066,6 +2076,7 @@ export class SocialStore {
     input: {
       archived?: boolean;
       notificationMode?: AppChatNotificationMode;
+      chatBackground?: ChatBackgroundPreset | null;
     }
   ): Promise<AppChatSummary> {
     await this.ensureReady();
@@ -2083,6 +2094,7 @@ export class SocialStore {
           user_id,
           is_archived,
           notification_mode,
+          chat_background,
           created_at,
           updated_at
         FROM chat_member_preferences
@@ -2096,7 +2108,13 @@ export class SocialStore {
     const current = mapChatPreferences(rows[0] ?? null);
     const next = {
       archived: typeof input.archived === 'boolean' ? input.archived : current.archived,
-      notificationMode: input.notificationMode ? toChatNotificationMode(input.notificationMode) : current.notificationMode
+      notificationMode: input.notificationMode ? toChatNotificationMode(input.notificationMode) : current.notificationMode,
+      chatBackground:
+        input.chatBackground === null
+          ? null
+          : input.chatBackground
+            ? toChatBackgroundPreset(input.chatBackground)
+            : current.chatBackground
     };
 
     await pool.query<ResultSetHeader>(
@@ -2106,16 +2124,18 @@ export class SocialStore {
           user_id,
           is_archived,
           notification_mode,
+          chat_background,
           created_at,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           is_archived = VALUES(is_archived),
           notification_mode = VALUES(notification_mode),
+          chat_background = VALUES(chat_background),
           updated_at = VALUES(updated_at)
       `,
-      [chatId, userId, next.archived ? 1 : 0, next.notificationMode, now, now]
+      [chatId, userId, next.archived ? 1 : 0, next.notificationMode, next.chatBackground, now, now]
     );
 
     const chats = await this.listChats(userId);

@@ -54,6 +54,7 @@ export type AppUserPreferences = {
 export type AppChatPreferences = {
   archived: boolean;
   notificationMode: AppChatNotificationMode;
+  chatBackground: ChatBackgroundPreset | null;
 };
 
 export type FriendRequestState = 'pending' | 'accepted' | 'declined' | 'cancelled';
