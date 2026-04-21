@@ -1043,9 +1043,9 @@ export default function ChatPage() {
           (item): item is TenorResult =>
             Boolean(
               item &&
-                typeof item === 'object' &&
-                typeof (item as TenorResult).id === 'string' &&
-                typeof (item as TenorResult).url === 'string'
+              typeof item === 'object' &&
+              typeof (item as TenorResult).id === 'string' &&
+              typeof (item as TenorResult).url === 'string'
             )
         )
         .slice(0, 80);
@@ -2161,9 +2161,9 @@ export default function ChatPage() {
       gif: hasGif ? selectedGif : null,
       poll: hasPoll
         ? {
-            question: pollQuestion.trim(),
-            options: pollOptions.map((item) => item.trim()).filter((item) => item.length > 0)
-          }
+          question: pollQuestion.trim(),
+          options: pollOptions.map((item) => item.trim()).filter((item) => item.length > 0)
+        }
         : null
     };
 
@@ -2848,6 +2848,19 @@ export default function ChatPage() {
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.34, delay: 0.08 }}
         >
+
+          <button
+            className="btn-soft px-2 py-1 text-[11px] uppercase"
+            onClick={() => {
+              setGroupName('');
+              setGroupMemberIds([]);
+              setDiscoverQuery('');
+              setShowGroupModal(true);
+            }}
+          >
+            + Gruppe
+          </button>
+
           <motion.button whileHover={{ scale: 1.07, y: -1 }} whileTap={{ scale: 0.96 }} className="server-pill active" onClick={() => void selectChat(activeChatId ?? chats[0]?.id ?? '')}>
             {initials(me)}
           </motion.button>
@@ -2869,174 +2882,6 @@ export default function ChatPage() {
               ) : null}
             </motion.button>
           ))}
-        </motion.aside>
-
-        <motion.aside
-          className="workspace-panel order-3 md:order-none max-h-[44dvh] overflow-y-auto md:max-h-[calc(100dvh-7.4rem)]"
-          initial={{ opacity: 0, x: -14 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.36, delay: 0.12 }}
-        >
-          <div className="glass-card mb-3 rounded-xl p-3">
-            <div className="flex items-center gap-3">
-              <Avatar user={me} size={42} sessionToken={token} />
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-slate-100">{me.fullName}</p>
-                <p className="surface-muted truncate text-xs">@{me.username}</p>
-              </div>
-              <span className={roleBadgeClass(me.role)}>{roleLabel(me.role)}</span>
-            </div>
-            <div className="mt-3 flex gap-2">
-              <Link className="btn-soft flex-1 text-center text-xs" href="/profile">
-                Profil
-              </Link>
-              <button className="btn-soft text-xs" onClick={() => void logout()}>
-                Abmelden
-              </button>
-            </div>
-          </div>
-
-          <section>
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <h2 className="surface-muted text-xs font-semibold uppercase tracking-wide">Channels</h2>
-              <button
-                className="btn-soft px-2 py-1 text-[11px] uppercase"
-                onClick={() => {
-                  setGroupName('');
-                  setGroupMemberIds([]);
-                  setDiscoverQuery('');
-                  setShowGroupModal(true);
-                }}
-              >
-                + Gruppe
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <p className="surface-muted mb-2 text-[11px] uppercase tracking-wide">Aktiv ({activeChats.length})</p>
-                <ul className="space-y-1.5">
-                  {activeChats.map((chat) => (
-                    <li key={chat.id}>
-                      <motion.button
-                        whileHover={{ x: 3 }}
-                        whileTap={{ scale: 0.985 }}
-                        className={`channel-row ${chat.id === activeChatId ? 'active' : ''} ${chat.unreadCount > 0 ? 'has-unread' : ''}`}
-                        onClick={() => void selectChat(chat.id)}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="truncate text-sm font-medium text-slate-100">
-                            {chat.kind === 'group' ? '#' : ''}
-                            {chat.name}
-                          </span>
-                          <div className="flex items-center gap-1.5">
-                            <span className="surface-muted text-[10px] uppercase">{chat.kind}</span>
-                            {chat.preferences.notificationMode === 'mute' ? (
-                              <span className="rounded-full border border-slate-700/70 bg-slate-950/55 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300">
-                                stumm
-                              </span>
-                            ) : null}
-                            {chat.mentionCount > 0 ? (
-                              <span className="mention-badge">{chat.mentionCount > 99 ? '99+' : chat.mentionCount}</span>
-                            ) : null}
-                            {chat.unreadCount > 0 ? (
-                              <span className="unread-badge">{chat.unreadCount > 99 ? '99+' : chat.unreadCount}</span>
-                            ) : null}
-                          </div>
-                        </div>
-                        <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-400">
-                          <span className="truncate">
-                            {chat.lastMessageText?.trim() ? chat.lastMessageText : 'Noch keine Vorschau vorhanden.'}
-                          </span>
-                        </div>
-                      </motion.button>
-                    </li>
-                  ))}
-                  {activeChats.length === 0 ? <li className="surface-muted text-xs">Keine aktiven Chats.</li> : null}
-                </ul>
-              </div>
-
-              {archivedChats.length > 0 ? (
-                <div className="rounded-xl border border-slate-800/80 bg-slate-950/25 p-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="surface-muted text-[11px] uppercase tracking-wide">Archiv ({archivedChats.length})</p>
-                    <button
-                      className="btn-soft px-2 py-1 text-[11px]"
-                      type="button"
-                      onClick={() =>
-                        void updateUserPreferences(
-                          { expandArchivedChats: !userPreferences.expandArchivedChats },
-                          userPreferences.expandArchivedChats ? 'Archiv eingeklappt.' : 'Archiv aufgeklappt.'
-                        )
-                      }
-                    >
-                      {archivedSectionExpanded ? 'Einklappen' : 'Anzeigen'}
-                    </button>
-                  </div>
-                  {archivedSectionExpanded ? (
-                    <ul className="mt-2 space-y-1.5">
-                      {archivedChats.map((chat) => (
-                        <li key={chat.id}>
-                          <motion.button
-                            whileHover={{ x: 3 }}
-                            whileTap={{ scale: 0.985 }}
-                            className={`channel-row ${chat.id === activeChatId ? 'active' : ''} ${chat.unreadCount > 0 ? 'has-unread' : ''}`}
-                            onClick={() => void selectChat(chat.id)}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="truncate text-sm font-medium text-slate-100">
-                                {chat.kind === 'group' ? '#' : ''}
-                                {chat.name}
-                              </span>
-                              <div className="flex items-center gap-1.5">
-                                <span className="rounded-full border border-slate-700/70 bg-slate-950/55 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300">
-                                  archiv
-                                </span>
-                                {chat.preferences.notificationMode === 'mute' ? (
-                                  <span className="rounded-full border border-slate-700/70 bg-slate-950/55 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300">
-                                    stumm
-                                  </span>
-                                ) : null}
-                                {chat.mentionCount > 0 ? (
-                                  <span className="mention-badge">{chat.mentionCount > 99 ? '99+' : chat.mentionCount}</span>
-                                ) : null}
-                                {chat.unreadCount > 0 ? (
-                                  <span className="unread-badge">{chat.unreadCount > 99 ? '99+' : chat.unreadCount}</span>
-                                ) : null}
-                              </div>
-                            </div>
-                            <div className="mt-1 text-[11px] text-slate-400">
-                              <span className="truncate">
-                                {chat.lastMessageText?.trim() ? chat.lastMessageText : 'Archiviert ohne Vorschau.'}
-                              </span>
-                            </div>
-                          </motion.button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="surface-muted mt-2 text-xs">Archivierte Chats bleiben aus dem Weg, bis du sie brauchst.</p>
-                  )}
-                </div>
-              ) : null}
-            </div>
-
-            <div className="mt-3 rounded-lg border border-slate-600/60 bg-slate-900/55 p-2">
-              <p className="surface-muted text-[11px] uppercase tracking-wide">Mit Einladungs-Code beitreten</p>
-              <div className="mt-2 flex items-center gap-2">
-                <input
-                  ref={inviteCodeInputRef}
-                  className="glass-input text-xs"
-                  placeholder="Einladungs-Code"
-                  value={groupInviteCodeInput}
-                  onChange={(event) => setGroupInviteCodeInput(event.target.value)}
-                />
-                <button className="btn-soft px-2 py-1 text-xs" onClick={() => void joinGroupByInviteCode()}>
-                  Beitreten
-                </button>
-              </div>
-            </div>
-          </section>
         </motion.aside>
 
         <motion.section
@@ -3221,58 +3066,58 @@ export default function ChatPage() {
                             </button>
                             {actionMenuMessageId === message.id && actionMenuPosition && typeof document !== 'undefined'
                               ? createPortal(
-                                  <div
-                                    ref={actionMenuRef}
-                                    className="message-menu"
-                                    style={{
-                                      top: actionMenuPosition.top,
-                                      left: actionMenuPosition.left,
-                                      maxHeight: actionMenuPosition.maxHeight
-                                    }}
-                                    onClick={(event) => event.stopPropagation()}
-                                  >
-                                    <div className="message-menu-row">
-                                      {QUICK_EMOJIS.slice(0, 6).map((emoji) => (
-                                        <button key={`${message.id}-menu-${emoji}`} className="reaction-chip quick" aria-label={`Mit ${emoji} reagieren`} onClick={() => void reactToMessage(message.id, emoji)}>
-                                          {emoji}
-                                        </button>
-                                      ))}
-                                      <button
-                                        className="btn-soft px-2 py-1 text-[10px]"
-                                        onClick={() => {
-                                          setEmojiTargetMessageId(message.id);
-                                          setShowEmojiPanel(true);
-                                          setActionMenuMessageId(null);
-                                        }}
-                                      >
-                                        Alle Emojis
+                                <div
+                                  ref={actionMenuRef}
+                                  className="message-menu"
+                                  style={{
+                                    top: actionMenuPosition.top,
+                                    left: actionMenuPosition.left,
+                                    maxHeight: actionMenuPosition.maxHeight
+                                  }}
+                                  onClick={(event) => event.stopPropagation()}
+                                >
+                                  <div className="message-menu-row">
+                                    {QUICK_EMOJIS.slice(0, 6).map((emoji) => (
+                                      <button key={`${message.id}-menu-${emoji}`} className="reaction-chip quick" aria-label={`Mit ${emoji} reagieren`} onClick={() => void reactToMessage(message.id, emoji)}>
+                                        {emoji}
                                       </button>
-                                    </div>
-                                    <button className="message-menu-item" onClick={() => replyToMessage(message)}>
-                                      Antworten
+                                    ))}
+                                    <button
+                                      className="btn-soft px-2 py-1 text-[10px]"
+                                      onClick={() => {
+                                        setEmojiTargetMessageId(message.id);
+                                        setShowEmojiPanel(true);
+                                        setActionMenuMessageId(null);
+                                      }}
+                                    >
+                                      Alle Emojis
                                     </button>
-                                    {canPinMessage() ? (
-                                      <button className="message-menu-item" onClick={() => void togglePinMessage(message.id)}>
-                                        {message.isPinned ? 'Unpin' : 'Pin'}
-                                      </button>
-                                    ) : null}
-                                    {canEdit ? (
-                                      <button className="message-menu-item" onClick={() => startEditMessage(message)}>
-                                        Bearbeiten
-                                      </button>
-                                    ) : null}
-                                    {!isMe ? (
-                                      <button className="message-menu-item" onClick={() => openMessageReportModal(message)}>
-                                        Melden
-                                      </button>
-                                    ) : null}
-                                    <button className="message-menu-item danger" onClick={() => openDeleteModal(message)}>
-                                      Löschen
+                                  </div>
+                                  <button className="message-menu-item" onClick={() => replyToMessage(message)}>
+                                    Antworten
+                                  </button>
+                                  {canPinMessage() ? (
+                                    <button className="message-menu-item" onClick={() => void togglePinMessage(message.id)}>
+                                      {message.isPinned ? 'Unpin' : 'Pin'}
                                     </button>
-                                    {!allowDeleteForAll ? <p className="message-menu-hint">Für alle nur als Autor, Moderator, Admin, Owner oder globaler Superadmin.</p> : null}
-                                  </div>,
-                                  document.body
-                                )
+                                  ) : null}
+                                  {canEdit ? (
+                                    <button className="message-menu-item" onClick={() => startEditMessage(message)}>
+                                      Bearbeiten
+                                    </button>
+                                  ) : null}
+                                  {!isMe ? (
+                                    <button className="message-menu-item" onClick={() => openMessageReportModal(message)}>
+                                      Melden
+                                    </button>
+                                  ) : null}
+                                  <button className="message-menu-item danger" onClick={() => openDeleteModal(message)}>
+                                    Löschen
+                                  </button>
+                                  {!allowDeleteForAll ? <p className="message-menu-hint">Für alle nur als Autor, Moderator, Admin, Owner oder globaler Superadmin.</p> : null}
+                                </div>,
+                                document.body
+                              )
                               : null}
                           </div>
                         </div>
@@ -3360,10 +3205,10 @@ export default function ChatPage() {
                               className={`reaction-chip ${reaction.reactedByMe ? 'active' : ''}`}
                               style={reaction.reactedByMe
                                 ? {
-                                    borderColor: hexToRgba(me?.accentColor, 0.38),
-                                    background: `linear-gradient(135deg, ${hexToRgba(me?.accentColor, 0.22)}, rgba(15, 23, 42, 0.85))`,
-                                    color: me?.accentColor ?? '#e2e8f0'
-                                  }
+                                  borderColor: hexToRgba(me?.accentColor, 0.38),
+                                  background: `linear-gradient(135deg, ${hexToRgba(me?.accentColor, 0.22)}, rgba(15, 23, 42, 0.85))`,
+                                  color: me?.accentColor ?? '#e2e8f0'
+                                }
                                 : undefined}
                               onClick={() => void reactToMessage(message.id, reaction.emoji)}
                               aria-label={`Reaktion ${reaction.emoji} ${reaction.count}`}
@@ -3426,9 +3271,9 @@ export default function ChatPage() {
           <motion.form onSubmit={sendMessage} className="chat-composer" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
             <div className="glass-card rounded-xl p-2">
               <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.98 }} className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => fileInputRef.current?.click()}>
-                    Datei/Bild
-                  </motion.button>
+                <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.98 }} className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => fileInputRef.current?.click()}>
+                  Datei/Bild
+                </motion.button>
                 <button
                   className="btn-soft px-2 py-1 text-xs"
                   type="button"
@@ -3919,390 +3764,390 @@ export default function ChatPage() {
             ) : null}
 
             {groupOverviewTab === 'admin' ? (
-            <>
-            {groupSettings.canModerateMessages ? (
-            <section className="mt-4">
-              <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Angepinnte Nachrichten</h3>
-              <ul className="mt-2 max-h-44 space-y-1.5 overflow-y-auto">
-                {pinnedMessages.map((message) => (
-                  <li key={`pinned-${message.id}`} className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-2">
-                    <p className="truncate text-xs text-slate-100">{message.text || '[Anhang / Medien]'}</p>
-                    <p className="surface-muted mt-1 text-[11px]">
-                      {message.user.fullName} · {message.pinnedAt ? new Date(message.pinnedAt).toLocaleString() : formatTime(message.createdAt)}
-                    </p>
-                  </li>
-                ))}
-                {pinnedMessages.length === 0 ? <li className="surface-muted text-xs">Keine angepinnten Nachrichten.</li> : null}
-              </ul>
-            </section>
-            ) : null}
-
-            {groupSettings.canViewModerationLogs ? (
-            <section className="mt-4">
-              <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Moderationsprotokoll</h3>
-              <ul className="mt-2 max-h-44 space-y-1.5 overflow-y-auto">
-                {moderationLogs.map((event) => (
-                  (() => {
-                    const eventMessageId = event.messageId;
-                    return (
-                  <li key={event.id} className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-2">
-                    <p className="text-xs text-slate-100">
-                      {event.actorName} · {moderationActionLabel(event.action)}
-                      {event.targetName ? ` · ${event.targetName}` : ''}
-                    </p>
-                    {moderationDetailsLabel(event.details) ? (
-                      <p className="surface-muted mt-1 text-[11px]">{moderationDetailsLabel(event.details)}</p>
-                    ) : null}
-                    <p className="surface-muted mt-1 text-[11px]">{new Date(event.createdAt).toLocaleString()}</p>
-                    {eventMessageId ? (
-                      <button className="btn-soft mt-2 px-2 py-1 text-[11px]" type="button" onClick={() => jumpToMessageFromModeration(eventMessageId)}>
-                        Zur Nachricht springen
-                      </button>
-                    ) : null}
-                  </li>
-                    );
-                  })()
-                ))}
-                {moderationLogs.length === 0 ? <li className="surface-muted text-xs">Noch keine Moderationsereignisse.</li> : null}
-              </ul>
-            </section>
-            ) : null}
-
-            {groupSettings.canViewModerationLogs ? (
-            <section className="mt-4">
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Reports</h3>
-                <select
-                  className="glass-input text-xs"
-                  value={reportStatusFilter}
-                  onChange={(event) => setReportStatusFilter(event.target.value as AppModerationReportStatus | 'all')}
-                >
-                  <option value="all">Alle</option>
-                  <option value="open">Offen</option>
-                  <option value="reviewing">In Prüfung</option>
-                  <option value="resolved">Gelöst</option>
-                  <option value="dismissed">Abgewiesen</option>
-                </select>
-              </div>
-              <ul className="mt-2 max-h-56 space-y-1.5 overflow-y-auto">
-                {moderationReports.map((report) => {
-                  const reportMessageId = report.messageId;
-                  return (
-                  <li key={report.id} className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="text-xs text-slate-100">
-                          {moderationReportReasonLabel(report.reason)} · {moderationReportStatusLabel(report.status)}
-                        </p>
-                        <p className="surface-muted mt-1 text-[11px]">
-                          von {report.reporterName}
-                          {report.targetName ? ` · gegen ${report.targetName}` : ''}
-                        </p>
-                      </div>
-                      {reportMessageId ? (
-                        <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => jumpToMessageFromModeration(reportMessageId)}>
-                          Öffnen
-                        </button>
-                      ) : null}
-                    </div>
-                    {report.messagePreview ? <p className="mt-2 text-xs text-slate-200">{report.messagePreview}</p> : null}
-                    {report.notes ? <p className="surface-muted mt-1 text-[11px]">Meldung: {report.notes}</p> : null}
-                    {report.decisionNotes ? <p className="surface-muted mt-1 text-[11px]">Entscheidung: {report.decisionNotes}</p> : null}
-                    <p className="surface-muted mt-1 text-[11px]">{new Date(report.createdAt).toLocaleString()}</p>
-                    {groupSettings.canModerateMessages ? (
-                      <textarea
-                        className="glass-input mt-2 min-h-[72px] text-xs"
-                        placeholder="Interne Entscheidungsnotiz oder Maßnahmegrund..."
-                        value={reportDecisionNotes[report.id] ?? ''}
-                        onChange={(event) => setReportDecisionNotes((prev) => ({ ...prev, [report.id]: event.target.value }))}
-                        maxLength={500}
-                      />
-                    ) : null}
-                    {groupSettings.canModerateMessages ? (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {report.targetUserId ? (
-                          <>
-                            <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void resolveReportWithAction(report.id, 'mute_1h')}>
-                              Lösen + 1h Mute
-                            </button>
-                            <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void resolveReportWithAction(report.id, 'mute_24h')}>
-                              Lösen + 24h Mute
-                            </button>
-                            <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void resolveReportWithAction(report.id, 'ban')}>
-                              Lösen + Bann
-                            </button>
-                            <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void resolveReportWithAction(report.id, 'unmute')}>
-                              Unmute
-                            </button>
-                            <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void resolveReportWithAction(report.id, 'unban')}>
-                              Unban
-                            </button>
-                          </>
-                        ) : null}
-                        {report.status !== 'reviewing' ? (
-                          <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void updateModerationReportStatus(report.id, 'reviewing')}>
-                            In Prüfung
-                          </button>
-                        ) : null}
-                        {report.status !== 'resolved' ? (
-                          <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void updateModerationReportStatus(report.id, 'resolved')}>
-                            Lösen
-                          </button>
-                        ) : null}
-                        {report.status !== 'dismissed' ? (
-                          <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void updateModerationReportStatus(report.id, 'dismissed')}>
-                            Abweisen
-                          </button>
-                        ) : null}
-                        {report.status !== 'open' ? (
-                          <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void updateModerationReportStatus(report.id, 'open')}>
-                            Wieder öffnen
-                          </button>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </li>
-                  );
-                })}
-                {moderationReports.length === 0 ? <li className="surface-muted text-xs">Keine Reports gefunden.</li> : null}
-              </ul>
-            </section>
-            ) : null}
-
-            {groupSettings.canManageUsers ? (
-            <section className="mt-4">
-              <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">User verwalten</h3>
-              <ul className="mt-2 max-h-56 space-y-1.5 overflow-y-auto">
-                {members.map((member) => {
-                  const viewerRole = viewerComparableRole;
-                  const canPromoteToModerator = member.user.id !== me.id && canAssignRole(viewerRole, member.role, 'moderator');
-                  const canPromoteToAdmin = member.user.id !== me.id && canAssignRole(viewerRole, member.role, 'admin');
-                  const canDemoteToMember = member.user.id !== me.id && canAssignRole(viewerRole, member.role, 'member');
-                  const canKick = member.user.id !== me.id && canManageRole(viewerRole, member.role);
-                  const canModerateMember = groupSettings.canModerateMessages && member.user.id !== me.id && canManageRole(viewerRole, member.role);
-                  const hasActiveMute = Boolean(member.mutedUntil && member.mutedUntil > Date.now());
-
-                  return (
-                    <li key={member.user.id} className="glass-card rounded-lg p-2 text-sm">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="truncate">
-                          <span className={`mr-1 inline-block h-2 w-2 rounded-full ${member.isOnline ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                          {member.user.fullName} ({groupRoleLabel(member.role)})
-                          {member.banActive ? ' · gebannt' : hasActiveMute ? ` · muted bis ${new Date(member.mutedUntil!).toLocaleString()}` : ''}
-                        </span>
-                        <div className="flex gap-1">
-                          {canPromoteToModerator ? (
-                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'set_role', 'moderator')}>
-                              zu Moderator
-                            </button>
-                          ) : null}
-                          {canPromoteToAdmin ? (
-                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'set_role', 'admin')}>
-                              zu Admin
-                            </button>
-                          ) : null}
-                          {canDemoteToMember ? (
-                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'set_role', 'member')}>
-                              zu User
-                            </button>
-                          ) : null}
-                          {member.user.id !== me.id ? (
-                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => openUserReportModal(member.user.id, member.user.fullName)}>
-                              Melden
-                            </button>
-                          ) : null}
-                          {canModerateMember ? (
-                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'mute_1h', undefined, 'moderation_panel_1h')}>
-                              1h Mute
-                            </button>
-                          ) : null}
-                          {canModerateMember ? (
-                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'ban', undefined, 'moderation_panel_ban')}>
-                              Bannen
-                            </button>
-                          ) : null}
-                          {canModerateMember && hasActiveMute ? (
-                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'unmute', undefined, 'moderation_panel_unmute')}>
-                              Unmute
-                            </button>
-                          ) : null}
-                          {groupSettings.canModerateMessages && member.banActive ? (
-                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'unban', undefined, 'moderation_panel_unban')}>
-                              Unban
-                            </button>
-                          ) : null}
-                          {canKick ? (
-                            <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'kick')}>
-                              Entfernen
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-                      {member.moderationNote ? <p className="surface-muted mt-1 text-[11px]">{member.moderationNote}</p> : null}
-                    </li>
-                  );
-                })}
-              </ul>
-
-              <div className="mt-3 rounded-lg border border-slate-700/70 bg-slate-900/45 p-2">
-                <p className="surface-muted text-[11px] uppercase tracking-wide">Direkt hinzufuegen</p>
-                <select
-                  className="glass-input mt-2 text-sm"
-                  value=""
-                  onChange={(event) => {
-                    const targetUserId = event.target.value;
-                    if (targetUserId) {
-                      void manageMember(targetUserId, 'invite');
-                    }
-                  }}
-                  disabled={!groupSettings.canInviteDirectly}
-                >
-                  <option value="">
-                    {groupSettings.canInviteDirectly
-                      ? 'Nutzer aus Entdecken hinzufügen...'
-                      : `Deaktiviert (${groupSettings.inviteMode === 'invite_link' ? 'Invite-Link erforderlich' : `Regel: ${invitePolicyLabel(groupSettings.invitePolicy)}`})`}
-                  </option>
-                  {discoverCandidates.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.fullName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </section>
-            ) : null}
-
-            {groupSettings.canManageSettings ? (
-              <section className="mt-4">
-                <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Gruppenregeln</h3>
-                <div className="mt-2 space-y-2">
-                  <label className="block space-y-1">
-                    <span className="surface-muted text-xs uppercase tracking-wide">Beitrittsmodus</span>
-                    <select className="glass-input text-sm" value={groupInviteModeDraft} onChange={(event) => setGroupInviteModeDraft(event.target.value as GroupInviteMode)}>
-                      <option value="direct">Direktes Hinzufuegen erlaubt</option>
-                      <option value="invite_link">Nur via Invite-Link</option>
-                    </select>
-                  </label>
-
-                  <label className="block space-y-1">
-                    <span className="surface-muted text-xs uppercase tracking-wide">Wer darf direkt hinzufuegen?</span>
-                    <select className="glass-input text-sm" value={groupInvitePolicyDraft} onChange={(event) => setGroupInvitePolicyDraft(event.target.value as GroupInvitePolicy)}>
-                      <option value="everyone">Jeder in der Gruppe</option>
-                      <option value="admins">Admins + Owner</option>
-                      <option value="owner">Nur Owner</option>
-                    </select>
-                  </label>
-
-                  <label className="block space-y-1">
-                    <span className="surface-muted text-xs uppercase tracking-wide">Wer darf @everyone nutzen?</span>
-                    <select
-                      className="glass-input text-sm"
-                      value={groupEveryoneMentionPolicyDraft}
-                      onChange={(event) => setGroupEveryoneMentionPolicyDraft(event.target.value as GroupMentionPolicy)}
-                    >
-                      <option value="everyone">Jeder in der Gruppe</option>
-                      <option value="admins">Admins + Owner</option>
-                      <option value="owner">Nur Owner</option>
-                    </select>
-                  </label>
-
-                  <label className="block space-y-1">
-                    <span className="surface-muted text-xs uppercase tracking-wide">Wer darf @here nutzen?</span>
-                    <select
-                      className="glass-input text-sm"
-                      value={groupHereMentionPolicyDraft}
-                      onChange={(event) => setGroupHereMentionPolicyDraft(event.target.value as GroupMentionPolicy)}
-                    >
-                      <option value="everyone">Jeder in der Gruppe</option>
-                      <option value="admins">Admins + Owner</option>
-                      <option value="owner">Nur Owner</option>
-                    </select>
-                  </label>
-
-                  <label className="flex items-center gap-2 rounded-md border border-slate-700/70 bg-slate-900/45 px-3 py-2 text-sm text-slate-200">
-                    <input type="checkbox" checked={groupAutoHide24hDraft} onChange={(event) => setGroupAutoHide24hDraft(event.target.checked)} />
-                    Nachrichten nach 24h für alle ausblenden (DB bleibt erhalten)
-                  </label>
-
-                  <label className="block space-y-1">
-                    <span className="surface-muted text-xs uppercase tracking-wide">Nachrichten-Cooldown in ms</span>
-                    <input
-                      className="glass-input text-sm"
-                      type="number"
-                      min={0}
-                      max={60000}
-                      step={100}
-                      value={groupMessageCooldownMsDraft}
-                      onChange={(event) => setGroupMessageCooldownMsDraft(Number.parseInt(event.target.value || '0', 10) || 0)}
-                    />
-                    <p className="surface-muted text-xs">Standard ist 1000ms. Gilt nur für normale Mitglieder, nicht für globale Admins/Superadmins oder Gruppen-Moderatoren/Admins/Owner.</p>
-                  </label>
-
-                  <button className="btn-primary text-sm" type="button" onClick={() => void saveGroupSettings()} disabled={isBusy}>
-                    {isBusy ? 'Speichere...' : 'Einstellungen speichern'}
-                  </button>
-                </div>
-              </section>
-            ) : null}
-
-            <section className="mt-4">
-              <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Invite-Link</h3>
-              {groupSettings.inviteCode ? (
-                <div className="mt-2 rounded-lg border border-slate-700/70 bg-slate-900/45 p-2">
-                  <p className="text-xs text-slate-100 break-all">
-                    {`${appOrigin}/chat?inviteCode=${encodeURIComponent(groupSettings.inviteCode)}`}
-                  </p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void copyInviteLink(groupSettings)}>
-                      Link kopieren
-                    </button>
-                    {groupSettings.canManageSettings ? (
-                      <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void regenerateInviteLink()} disabled={isBusy}>
-                        Neu generieren
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              ) : (
-                <p className="surface-muted mt-2 text-sm">Kein Invite-Link aktiv.</p>
-              )}
-            </section>
-
-            {groupSettings.canTransferOwnership ? (
-              <section className="mt-4">
-                <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Besitz übertragen</h3>
-                <div className="mt-2 flex items-center gap-2">
-                  <select className="glass-input text-sm" value={ownershipTargetUserId} onChange={(event) => setOwnershipTargetUserId(event.target.value)}>
-                    <option value="">Neuen Owner auswählen...</option>
-                    {members
-                      .filter((member) => member.user.id !== me.id)
-                      .map((member) => (
-                        <option key={member.user.id} value={member.user.id}>
-                          {member.user.fullName} ({groupRoleLabel(member.role)})
-                        </option>
+              <>
+                {groupSettings.canModerateMessages ? (
+                  <section className="mt-4">
+                    <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Angepinnte Nachrichten</h3>
+                    <ul className="mt-2 max-h-44 space-y-1.5 overflow-y-auto">
+                      {pinnedMessages.map((message) => (
+                        <li key={`pinned-${message.id}`} className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-2">
+                          <p className="truncate text-xs text-slate-100">{message.text || '[Anhang / Medien]'}</p>
+                          <p className="surface-muted mt-1 text-[11px]">
+                            {message.user.fullName} · {message.pinnedAt ? new Date(message.pinnedAt).toLocaleString() : formatTime(message.createdAt)}
+                          </p>
+                        </li>
                       ))}
-                  </select>
-                  <button
-                    className="btn-soft px-2 py-1 text-xs"
-                    type="button"
-                    onClick={() => void transferOwnership()}
-                    disabled={!ownershipTargetUserId}
-                  >
-                    Übertragen
-                  </button>
-                </div>
-              </section>
-            ) : null}
+                      {pinnedMessages.length === 0 ? <li className="surface-muted text-xs">Keine angepinnten Nachrichten.</li> : null}
+                    </ul>
+                  </section>
+                ) : null}
 
-            {groupSettings.canCloseGroup ? (
-              <section className="mt-4">
-                <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Gruppe schliessen</h3>
-                <button className="btn-soft btn-danger mt-2 text-sm" type="button" onClick={() => void closeActiveGroup()} disabled={isBusy}>
-                  Gruppe dauerhaft deaktivieren
-                </button>
-              </section>
-            ) : null}
-            </>
+                {groupSettings.canViewModerationLogs ? (
+                  <section className="mt-4">
+                    <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Moderationsprotokoll</h3>
+                    <ul className="mt-2 max-h-44 space-y-1.5 overflow-y-auto">
+                      {moderationLogs.map((event) => (
+                        (() => {
+                          const eventMessageId = event.messageId;
+                          return (
+                            <li key={event.id} className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-2">
+                              <p className="text-xs text-slate-100">
+                                {event.actorName} · {moderationActionLabel(event.action)}
+                                {event.targetName ? ` · ${event.targetName}` : ''}
+                              </p>
+                              {moderationDetailsLabel(event.details) ? (
+                                <p className="surface-muted mt-1 text-[11px]">{moderationDetailsLabel(event.details)}</p>
+                              ) : null}
+                              <p className="surface-muted mt-1 text-[11px]">{new Date(event.createdAt).toLocaleString()}</p>
+                              {eventMessageId ? (
+                                <button className="btn-soft mt-2 px-2 py-1 text-[11px]" type="button" onClick={() => jumpToMessageFromModeration(eventMessageId)}>
+                                  Zur Nachricht springen
+                                </button>
+                              ) : null}
+                            </li>
+                          );
+                        })()
+                      ))}
+                      {moderationLogs.length === 0 ? <li className="surface-muted text-xs">Noch keine Moderationsereignisse.</li> : null}
+                    </ul>
+                  </section>
+                ) : null}
+
+                {groupSettings.canViewModerationLogs ? (
+                  <section className="mt-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Reports</h3>
+                      <select
+                        className="glass-input text-xs"
+                        value={reportStatusFilter}
+                        onChange={(event) => setReportStatusFilter(event.target.value as AppModerationReportStatus | 'all')}
+                      >
+                        <option value="all">Alle</option>
+                        <option value="open">Offen</option>
+                        <option value="reviewing">In Prüfung</option>
+                        <option value="resolved">Gelöst</option>
+                        <option value="dismissed">Abgewiesen</option>
+                      </select>
+                    </div>
+                    <ul className="mt-2 max-h-56 space-y-1.5 overflow-y-auto">
+                      {moderationReports.map((report) => {
+                        const reportMessageId = report.messageId;
+                        return (
+                          <li key={report.id} className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <p className="text-xs text-slate-100">
+                                  {moderationReportReasonLabel(report.reason)} · {moderationReportStatusLabel(report.status)}
+                                </p>
+                                <p className="surface-muted mt-1 text-[11px]">
+                                  von {report.reporterName}
+                                  {report.targetName ? ` · gegen ${report.targetName}` : ''}
+                                </p>
+                              </div>
+                              {reportMessageId ? (
+                                <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => jumpToMessageFromModeration(reportMessageId)}>
+                                  Öffnen
+                                </button>
+                              ) : null}
+                            </div>
+                            {report.messagePreview ? <p className="mt-2 text-xs text-slate-200">{report.messagePreview}</p> : null}
+                            {report.notes ? <p className="surface-muted mt-1 text-[11px]">Meldung: {report.notes}</p> : null}
+                            {report.decisionNotes ? <p className="surface-muted mt-1 text-[11px]">Entscheidung: {report.decisionNotes}</p> : null}
+                            <p className="surface-muted mt-1 text-[11px]">{new Date(report.createdAt).toLocaleString()}</p>
+                            {groupSettings.canModerateMessages ? (
+                              <textarea
+                                className="glass-input mt-2 min-h-[72px] text-xs"
+                                placeholder="Interne Entscheidungsnotiz oder Maßnahmegrund..."
+                                value={reportDecisionNotes[report.id] ?? ''}
+                                onChange={(event) => setReportDecisionNotes((prev) => ({ ...prev, [report.id]: event.target.value }))}
+                                maxLength={500}
+                              />
+                            ) : null}
+                            {groupSettings.canModerateMessages ? (
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {report.targetUserId ? (
+                                  <>
+                                    <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void resolveReportWithAction(report.id, 'mute_1h')}>
+                                      Lösen + 1h Mute
+                                    </button>
+                                    <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void resolveReportWithAction(report.id, 'mute_24h')}>
+                                      Lösen + 24h Mute
+                                    </button>
+                                    <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void resolveReportWithAction(report.id, 'ban')}>
+                                      Lösen + Bann
+                                    </button>
+                                    <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void resolveReportWithAction(report.id, 'unmute')}>
+                                      Unmute
+                                    </button>
+                                    <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void resolveReportWithAction(report.id, 'unban')}>
+                                      Unban
+                                    </button>
+                                  </>
+                                ) : null}
+                                {report.status !== 'reviewing' ? (
+                                  <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void updateModerationReportStatus(report.id, 'reviewing')}>
+                                    In Prüfung
+                                  </button>
+                                ) : null}
+                                {report.status !== 'resolved' ? (
+                                  <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void updateModerationReportStatus(report.id, 'resolved')}>
+                                    Lösen
+                                  </button>
+                                ) : null}
+                                {report.status !== 'dismissed' ? (
+                                  <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void updateModerationReportStatus(report.id, 'dismissed')}>
+                                    Abweisen
+                                  </button>
+                                ) : null}
+                                {report.status !== 'open' ? (
+                                  <button className="btn-soft px-2 py-1 text-[11px]" type="button" onClick={() => void updateModerationReportStatus(report.id, 'open')}>
+                                    Wieder öffnen
+                                  </button>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                      {moderationReports.length === 0 ? <li className="surface-muted text-xs">Keine Reports gefunden.</li> : null}
+                    </ul>
+                  </section>
+                ) : null}
+
+                {groupSettings.canManageUsers ? (
+                  <section className="mt-4">
+                    <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">User verwalten</h3>
+                    <ul className="mt-2 max-h-56 space-y-1.5 overflow-y-auto">
+                      {members.map((member) => {
+                        const viewerRole = viewerComparableRole;
+                        const canPromoteToModerator = member.user.id !== me.id && canAssignRole(viewerRole, member.role, 'moderator');
+                        const canPromoteToAdmin = member.user.id !== me.id && canAssignRole(viewerRole, member.role, 'admin');
+                        const canDemoteToMember = member.user.id !== me.id && canAssignRole(viewerRole, member.role, 'member');
+                        const canKick = member.user.id !== me.id && canManageRole(viewerRole, member.role);
+                        const canModerateMember = groupSettings.canModerateMessages && member.user.id !== me.id && canManageRole(viewerRole, member.role);
+                        const hasActiveMute = Boolean(member.mutedUntil && member.mutedUntil > Date.now());
+
+                        return (
+                          <li key={member.user.id} className="glass-card rounded-lg p-2 text-sm">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="truncate">
+                                <span className={`mr-1 inline-block h-2 w-2 rounded-full ${member.isOnline ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                                {member.user.fullName} ({groupRoleLabel(member.role)})
+                                {member.banActive ? ' · gebannt' : hasActiveMute ? ` · muted bis ${new Date(member.mutedUntil!).toLocaleString()}` : ''}
+                              </span>
+                              <div className="flex gap-1">
+                                {canPromoteToModerator ? (
+                                  <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'set_role', 'moderator')}>
+                                    zu Moderator
+                                  </button>
+                                ) : null}
+                                {canPromoteToAdmin ? (
+                                  <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'set_role', 'admin')}>
+                                    zu Admin
+                                  </button>
+                                ) : null}
+                                {canDemoteToMember ? (
+                                  <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'set_role', 'member')}>
+                                    zu User
+                                  </button>
+                                ) : null}
+                                {member.user.id !== me.id ? (
+                                  <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => openUserReportModal(member.user.id, member.user.fullName)}>
+                                    Melden
+                                  </button>
+                                ) : null}
+                                {canModerateMember ? (
+                                  <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'mute_1h', undefined, 'moderation_panel_1h')}>
+                                    1h Mute
+                                  </button>
+                                ) : null}
+                                {canModerateMember ? (
+                                  <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'ban', undefined, 'moderation_panel_ban')}>
+                                    Bannen
+                                  </button>
+                                ) : null}
+                                {canModerateMember && hasActiveMute ? (
+                                  <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'unmute', undefined, 'moderation_panel_unmute')}>
+                                    Unmute
+                                  </button>
+                                ) : null}
+                                {groupSettings.canModerateMessages && member.banActive ? (
+                                  <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'unban', undefined, 'moderation_panel_unban')}>
+                                    Unban
+                                  </button>
+                                ) : null}
+                                {canKick ? (
+                                  <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void manageMember(member.user.id, 'kick')}>
+                                    Entfernen
+                                  </button>
+                                ) : null}
+                              </div>
+                            </div>
+                            {member.moderationNote ? <p className="surface-muted mt-1 text-[11px]">{member.moderationNote}</p> : null}
+                          </li>
+                        );
+                      })}
+                    </ul>
+
+                    <div className="mt-3 rounded-lg border border-slate-700/70 bg-slate-900/45 p-2">
+                      <p className="surface-muted text-[11px] uppercase tracking-wide">Direkt hinzufuegen</p>
+                      <select
+                        className="glass-input mt-2 text-sm"
+                        value=""
+                        onChange={(event) => {
+                          const targetUserId = event.target.value;
+                          if (targetUserId) {
+                            void manageMember(targetUserId, 'invite');
+                          }
+                        }}
+                        disabled={!groupSettings.canInviteDirectly}
+                      >
+                        <option value="">
+                          {groupSettings.canInviteDirectly
+                            ? 'Nutzer aus Entdecken hinzufügen...'
+                            : `Deaktiviert (${groupSettings.inviteMode === 'invite_link' ? 'Invite-Link erforderlich' : `Regel: ${invitePolicyLabel(groupSettings.invitePolicy)}`})`}
+                        </option>
+                        {discoverCandidates.map((user) => (
+                          <option key={user.id} value={user.id}>
+                            {user.fullName}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </section>
+                ) : null}
+
+                {groupSettings.canManageSettings ? (
+                  <section className="mt-4">
+                    <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Gruppenregeln</h3>
+                    <div className="mt-2 space-y-2">
+                      <label className="block space-y-1">
+                        <span className="surface-muted text-xs uppercase tracking-wide">Beitrittsmodus</span>
+                        <select className="glass-input text-sm" value={groupInviteModeDraft} onChange={(event) => setGroupInviteModeDraft(event.target.value as GroupInviteMode)}>
+                          <option value="direct">Direktes Hinzufuegen erlaubt</option>
+                          <option value="invite_link">Nur via Invite-Link</option>
+                        </select>
+                      </label>
+
+                      <label className="block space-y-1">
+                        <span className="surface-muted text-xs uppercase tracking-wide">Wer darf direkt hinzufuegen?</span>
+                        <select className="glass-input text-sm" value={groupInvitePolicyDraft} onChange={(event) => setGroupInvitePolicyDraft(event.target.value as GroupInvitePolicy)}>
+                          <option value="everyone">Jeder in der Gruppe</option>
+                          <option value="admins">Admins + Owner</option>
+                          <option value="owner">Nur Owner</option>
+                        </select>
+                      </label>
+
+                      <label className="block space-y-1">
+                        <span className="surface-muted text-xs uppercase tracking-wide">Wer darf @everyone nutzen?</span>
+                        <select
+                          className="glass-input text-sm"
+                          value={groupEveryoneMentionPolicyDraft}
+                          onChange={(event) => setGroupEveryoneMentionPolicyDraft(event.target.value as GroupMentionPolicy)}
+                        >
+                          <option value="everyone">Jeder in der Gruppe</option>
+                          <option value="admins">Admins + Owner</option>
+                          <option value="owner">Nur Owner</option>
+                        </select>
+                      </label>
+
+                      <label className="block space-y-1">
+                        <span className="surface-muted text-xs uppercase tracking-wide">Wer darf @here nutzen?</span>
+                        <select
+                          className="glass-input text-sm"
+                          value={groupHereMentionPolicyDraft}
+                          onChange={(event) => setGroupHereMentionPolicyDraft(event.target.value as GroupMentionPolicy)}
+                        >
+                          <option value="everyone">Jeder in der Gruppe</option>
+                          <option value="admins">Admins + Owner</option>
+                          <option value="owner">Nur Owner</option>
+                        </select>
+                      </label>
+
+                      <label className="flex items-center gap-2 rounded-md border border-slate-700/70 bg-slate-900/45 px-3 py-2 text-sm text-slate-200">
+                        <input type="checkbox" checked={groupAutoHide24hDraft} onChange={(event) => setGroupAutoHide24hDraft(event.target.checked)} />
+                        Nachrichten nach 24h für alle ausblenden (DB bleibt erhalten)
+                      </label>
+
+                      <label className="block space-y-1">
+                        <span className="surface-muted text-xs uppercase tracking-wide">Nachrichten-Cooldown in ms</span>
+                        <input
+                          className="glass-input text-sm"
+                          type="number"
+                          min={0}
+                          max={60000}
+                          step={100}
+                          value={groupMessageCooldownMsDraft}
+                          onChange={(event) => setGroupMessageCooldownMsDraft(Number.parseInt(event.target.value || '0', 10) || 0)}
+                        />
+                        <p className="surface-muted text-xs">Standard ist 1000ms. Gilt nur für normale Mitglieder, nicht für globale Admins/Superadmins oder Gruppen-Moderatoren/Admins/Owner.</p>
+                      </label>
+
+                      <button className="btn-primary text-sm" type="button" onClick={() => void saveGroupSettings()} disabled={isBusy}>
+                        {isBusy ? 'Speichere...' : 'Einstellungen speichern'}
+                      </button>
+                    </div>
+                  </section>
+                ) : null}
+
+                <section className="mt-4">
+                  <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Invite-Link</h3>
+                  {groupSettings.inviteCode ? (
+                    <div className="mt-2 rounded-lg border border-slate-700/70 bg-slate-900/45 p-2">
+                      <p className="text-xs text-slate-100 break-all">
+                        {`${appOrigin}/chat?inviteCode=${encodeURIComponent(groupSettings.inviteCode)}`}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void copyInviteLink(groupSettings)}>
+                          Link kopieren
+                        </button>
+                        {groupSettings.canManageSettings ? (
+                          <button className="btn-soft px-2 py-1 text-xs" type="button" onClick={() => void regenerateInviteLink()} disabled={isBusy}>
+                            Neu generieren
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="surface-muted mt-2 text-sm">Kein Invite-Link aktiv.</p>
+                  )}
+                </section>
+
+                {groupSettings.canTransferOwnership ? (
+                  <section className="mt-4">
+                    <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Besitz übertragen</h3>
+                    <div className="mt-2 flex items-center gap-2">
+                      <select className="glass-input text-sm" value={ownershipTargetUserId} onChange={(event) => setOwnershipTargetUserId(event.target.value)}>
+                        <option value="">Neuen Owner auswählen...</option>
+                        {members
+                          .filter((member) => member.user.id !== me.id)
+                          .map((member) => (
+                            <option key={member.user.id} value={member.user.id}>
+                              {member.user.fullName} ({groupRoleLabel(member.role)})
+                            </option>
+                          ))}
+                      </select>
+                      <button
+                        className="btn-soft px-2 py-1 text-xs"
+                        type="button"
+                        onClick={() => void transferOwnership()}
+                        disabled={!ownershipTargetUserId}
+                      >
+                        Übertragen
+                      </button>
+                    </div>
+                  </section>
+                ) : null}
+
+                {groupSettings.canCloseGroup ? (
+                  <section className="mt-4">
+                    <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Gruppe schliessen</h3>
+                    <button className="btn-soft btn-danger mt-2 text-sm" type="button" onClick={() => void closeActiveGroup()} disabled={isBusy}>
+                      Gruppe dauerhaft deaktivieren
+                    </button>
+                  </section>
+                ) : null}
+              </>
             ) : null}
 
             <button className="btn-soft mt-4 w-full" type="button" onClick={() => setShowGroupManageModal(false)}>
