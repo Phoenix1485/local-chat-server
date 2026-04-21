@@ -150,6 +150,15 @@ body.chat-no-scroll {
   flex-direction: column;
 }
 
+body.chat-no-scroll .app-layout-shell {
+  height: 100dvh;
+  min-height: 0;
+}
+
+body.chat-no-scroll .app-main-area {
+  min-height: 0;
+}
+
 body.chat-no-scroll .top-nav {
   margin-bottom: 0;
   flex: 0 0 auto;
@@ -677,8 +686,11 @@ body::before {
     display: grid;
     gap: 1rem;
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) auto;
     align-items: stretch;
-    min-height: calc(100dvh - 5.6rem);
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
     overflow-x: hidden;
   }
 
@@ -706,6 +718,9 @@ body::before {
     flex-direction: column;
     gap: 0.48rem;
     align-items: center;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
   }
 
   .server-pill {
@@ -766,8 +781,15 @@ body::before {
       rgba(26, 37, 55, 0.7);
     backdrop-filter: blur(16px) saturate(128%);
     padding: 0.95rem;
+    min-width: 0;
+    min-height: 0;
     overscroll-behavior: contain;
+    overflow-y: auto;
     overflow-x: hidden;
+  }
+
+  .chat-side-panel {
+    max-height: min(34dvh, 18rem);
   }
 
   .workspace-panel>section+section {
@@ -785,6 +807,7 @@ body::before {
     backdrop-filter: blur(18px) saturate(132%);
     display: flex;
     flex-direction: column;
+    min-width: 0;
     min-height: 0;
     overflow: hidden;
     overflow-x: hidden;
@@ -1884,6 +1907,10 @@ body::before {
     grid-template-columns: 1fr;
   }
 
+  body.chat-no-scroll .app-layout-shell {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
   .app-sidebar {
     position: static;
     height: auto;
@@ -1918,7 +1945,7 @@ body::before {
 
   .discord-shell {
     gap: 0.55rem;
-    min-height: calc(100dvh - 3.9rem);
+    grid-template-rows: minmax(0, 1fr) auto;
   }
 
   .server-rail {
@@ -1940,6 +1967,10 @@ body::before {
 
   .workspace-panel {
     padding: 0.72rem;
+  }
+
+  .chat-side-panel {
+    max-height: min(32dvh, 17rem);
   }
 
   .workspace-panel>section+section {
@@ -2048,7 +2079,25 @@ body::before {
 
 @media (min-width: 768px) {
   .discord-shell {
-    grid-template-columns: 4.1rem minmax(260px, 340px) minmax(0, 1fr);
+    gap: 0.75rem;
+    grid-template-columns: 4.1rem minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(12rem, 32dvh);
+  }
+
+  .server-rail {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .chat-stage {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .chat-side-panel {
+    grid-column: 2;
+    grid-row: 2;
+    max-height: none;
   }
 
   .profile-shell {
@@ -2064,9 +2113,34 @@ body::before {
   }
 }
 
+@media (min-width: 1024px) {
+  .discord-shell {
+    gap: 0.875rem;
+    grid-template-columns: 4.1rem minmax(0, 1fr) clamp(17.5rem, 24vw, 21.5rem);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .server-rail {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .chat-stage {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .chat-side-panel {
+    grid-column: 3;
+    grid-row: 1;
+    max-height: none;
+  }
+}
+
 @media (min-width: 1280px) {
   .discord-shell {
-    grid-template-columns: 4.1rem minmax(280px, 350px) minmax(0, 1fr) minmax(280px, 360px);
+    gap: 1rem;
+    grid-template-columns: 4.1rem minmax(38rem, 1fr) clamp(18rem, 21vw, 22.5rem);
   }
 
   .profile-shell {

@@ -3474,7 +3474,7 @@ export default function ChatPage() {
         </motion.section>
 
         <motion.aside
-          className="workspace-panel order-2 md:order-none max-h-[44dvh] overflow-y-auto md:max-h-[calc(100dvh-7.4rem)]"
+          className="workspace-panel chat-side-panel order-2 md:order-none"
           initial={{ opacity: 0, x: 14 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.36, delay: 0.2 }}
