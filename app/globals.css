@@ -3617,3 +3617,316 @@ img.rounded-full,
     transform: none !important;
   }
 }
+
+/* Responsive chat polish: clearer scroll lanes, softer glass and tighter media controls. */
+:root {
+  --glass-ultra: linear-gradient(150deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.032) 48%, rgba(255, 255, 255, 0.012)),
+    rgba(2, 7, 14, 0.34);
+  --glass-ultra-card: linear-gradient(155deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.028) 54%, rgba(255, 255, 255, 0.012)),
+    rgba(4, 10, 20, 0.25);
+  --glass-ultra-border: rgba(255, 255, 255, 0.11);
+  --glass-ultra-blur: blur(58px) saturate(190%);
+}
+
+.chat-page-shell {
+  min-width: 0;
+}
+
+.server-rail,
+.server-sections,
+.server-chat-list,
+.chat-stage,
+.workspace-panel,
+.chat-header,
+.chat-composer,
+.composer-input-row {
+  min-width: 0;
+}
+
+.server-rail,
+.workspace-panel,
+.chat-stage,
+.modal-card,
+.message-menu,
+.mention-suggest-panel,
+.emoji-panel,
+.composer-action-menu,
+.chat-filter-menu {
+  background: var(--glass-ultra) !important;
+  border-color: var(--glass-ultra-border) !important;
+  -webkit-backdrop-filter: var(--glass-ultra-blur) !important;
+  backdrop-filter: var(--glass-ultra-blur) !important;
+}
+
+.server-section,
+.server-chat-item,
+.attachment-chip,
+.poll-card,
+.poll-option,
+.reaction-chip,
+.composer-banner,
+.media-finder-section li,
+.media-finder-grid a,
+.chat-composer .glass-card {
+  background: var(--glass-ultra-card) !important;
+  border-color: rgba(255, 255, 255, 0.105) !important;
+  -webkit-backdrop-filter: blur(40px) saturate(175%) !important;
+  backdrop-filter: blur(40px) saturate(175%) !important;
+}
+
+.server-rail {
+  isolation: isolate;
+}
+
+.server-sections {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.server-chat-list {
+  overflow: visible;
+}
+
+.server-chat-item {
+  flex: 0 0 auto;
+}
+
+.server-chat-item-copy,
+.server-identity-copy,
+.composer-action-title,
+.composer-action-subtitle {
+  min-width: 0;
+}
+
+.chat-header {
+  flex-wrap: wrap;
+}
+
+.chat-header>div:first-child {
+  flex: 1 1 13rem;
+  min-width: 0;
+}
+
+.chat-header-actions {
+  flex: 0 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.composer-input-row {
+  width: 100%;
+}
+
+.composer-input {
+  width: 100%;
+  min-width: 0;
+}
+
+.chat-composer .glass-card {
+  overflow: visible;
+}
+
+.composer-banner,
+.composer-status-row,
+.emoji-panel-head {
+  flex-wrap: wrap;
+}
+
+.attachment-chip {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.attachment-chip a {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.msg-bubble img,
+.msg-bubble video,
+.attachment-chip img,
+.attachment-chip video {
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+audio,
+video {
+  width: 100%;
+  max-width: 100%;
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
+    rgba(3, 8, 16, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  -webkit-backdrop-filter: blur(32px) saturate(170%);
+  backdrop-filter: blur(32px) saturate(170%);
+}
+
+audio::-webkit-media-controls-panel,
+video::-webkit-media-controls-panel {
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04)),
+    rgba(7, 13, 24, 0.72);
+}
+
+.media-finder-list,
+.media-finder-grid {
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.media-finder-grid {
+  grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr)) !important;
+}
+
+.media-finder-grid img {
+  aspect-ratio: 1 / 1;
+  height: auto !important;
+}
+
+.msg-row.system {
+  justify-content: center;
+}
+
+.msg-bubble.system {
+  max-width: min(86%, 680px);
+  border-color: rgba(167, 243, 208, 0.24) !important;
+  background:
+    linear-gradient(150deg, rgba(209, 250, 229, 0.12), rgba(255, 255, 255, 0.035)),
+    rgba(6, 28, 24, 0.34) !important;
+}
+
+.system-author {
+  color: #d1fae5;
+}
+
+@media (max-width: 767px) {
+  .chat-page-shell {
+    grid-template-rows: minmax(8.5rem, 30dvh) minmax(0, 1fr) minmax(0, 28dvh);
+    gap: 0.48rem;
+    padding: 0.44rem;
+  }
+
+  .server-rail {
+    max-height: min(30dvh, 18rem);
+  }
+
+  .server-rail-header {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .server-identity {
+    flex: 1 1 12rem;
+  }
+
+  .server-rail-actions {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+
+  .server-sections {
+    max-height: calc(30dvh - 4.6rem);
+  }
+
+  .server-chat-list {
+    padding-right: 0.2rem;
+  }
+
+  .chat-header {
+    align-items: flex-start;
+    gap: 0.58rem;
+  }
+
+  .chat-header>div:first-child,
+  .chat-header-actions {
+    flex-basis: 100%;
+  }
+
+  .chat-header-actions {
+    justify-content: flex-start;
+  }
+
+  .message-list {
+    padding: 0.72rem;
+  }
+
+  .msg-bubble {
+    max-width: min(96%, 38rem);
+  }
+
+  .msg-bubble.system {
+    max-width: 96%;
+  }
+
+  .chat-composer {
+    padding: 0.58rem;
+  }
+
+  .composer-action-menu {
+    max-width: calc(100vw - 1rem);
+  }
+
+  .emoji-tabs,
+  .gif-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 0.12rem;
+    scrollbar-width: none;
+  }
+
+  .emoji-tabs::-webkit-scrollbar,
+  .gif-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .emoji-tab,
+  .gif-tab {
+    flex: 0 0 auto;
+  }
+
+  .media-finder-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .workspace-panel {
+    max-height: min(28dvh, 16rem);
+  }
+}
+
+@media (max-width: 430px) {
+  .chat-page-shell {
+    grid-template-rows: minmax(8rem, 28dvh) minmax(0, 1fr) minmax(0, 25dvh);
+  }
+
+  .server-rail {
+    max-height: min(28dvh, 16rem);
+  }
+
+  .server-sections {
+    max-height: calc(28dvh - 4.35rem);
+  }
+
+  .composer-input-row {
+    grid-template-columns: 2.45rem minmax(0, 1fr) 2.65rem;
+    gap: 0.36rem;
+  }
+
+  .icon-btn,
+  .composer-icon-button {
+    width: 2.35rem;
+    height: 2.35rem;
+    min-height: 2.35rem;
+  }
+
+  .composer-send-button {
+    min-width: 2.65rem;
+    width: 2.65rem;
+  }
+}

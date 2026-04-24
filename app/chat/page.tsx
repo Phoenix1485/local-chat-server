@@ -3461,11 +3461,12 @@ export default function ChatPage() {
 
           <motion.div ref={messageListRef} className="message-list" onClick={() => setActionMenuMessageId(null)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3, delay: 0.2 }}>
             {filteredMessages.map((message, index) => {
-              const isMe = message.user.id === me.id;
+              const isSystemMessage = message.isSystem;
+              const isMe = !isSystemMessage && message.user.id === me.id;
               const isUnreadStart = firstUnreadMessageId === message.id && unreadCountAtOpen > 0;
               const previousMessage = index > 0 ? filteredMessages[index - 1] : null;
               const startsNewDay = !previousMessage || !isSameCalendarDay(previousMessage.createdAt, message.createdAt);
-              const canEdit = isMe && !message.deletedForAll;
+              const canEdit = isMe && !isSystemMessage && !message.deletedForAll;
               const allowDeleteForAll = canDeleteForAll(message);
               const displayText = message.deletedForAll ? 'Nachricht wurde gelöscht.' : message.text;
               const isGroupChat = context?.chat.kind === 'group';
@@ -3495,18 +3496,27 @@ export default function ChatPage() {
                       <span>Ungelesene Nachrichten ({unreadCountAtOpen})</span>
                     </div>
                   ) : null}
-                  <motion.article className={`msg-row ${isMe ? 'me' : 'other'}`} initial={{ opacity: 0.98 }} animate={{ opacity: 1 }}>
-                    <motion.div className={`msg-bubble ${isMe ? 'me' : 'other'} ${mentionsMe ? 'mention' : ''}`} whileHover={{ y: -1 }}>
+                  <motion.article className={`msg-row ${isMe ? 'me' : 'other'} ${isSystemMessage ? 'system' : ''}`} initial={{ opacity: 0.98 }} animate={{ opacity: 1 }}>
+                    <motion.div className={`msg-bubble ${isMe ? 'me' : 'other'} ${isSystemMessage ? 'system' : ''} ${mentionsMe ? 'mention' : ''}`} whileHover={{ y: -1 }}>
                       <header className="mb-1 flex items-center justify-between gap-2">
-                        <button className="flex min-w-0 items-center gap-2" onClick={() => void openProfile(message.user.id)}>
-                          {!isMe ? <Avatar user={message.user} size={20} sessionToken={token} /> : null}
-                          <span
-                            className={`truncate text-xs font-semibold ${isMe ? 'text-indigo-50' : 'text-slate-100'}`}
-                            style={!isMe ? { color: message.user.accentColor ?? '#e2e8f0' } : undefined}
-                          >
-                            {isMe ? 'Du' : message.user.fullName}
+                        {isSystemMessage ? (
+                          <span className="system-author flex min-w-0 items-center gap-2">
+                            <Avatar user={message.user} size={20} sessionToken={token} />
+                            <span className="truncate text-xs font-semibold">
+                              System
+                            </span>
                           </span>
-                        </button>
+                        ) : (
+                          <button className="flex min-w-0 items-center gap-2" onClick={() => void openProfile(message.user.id)}>
+                            {!isMe ? <Avatar user={message.user} size={20} sessionToken={token} /> : null}
+                            <span
+                              className={`truncate text-xs font-semibold ${isMe ? 'text-indigo-50' : 'text-slate-100'}`}
+                              style={!isMe ? { color: message.user.accentColor ?? '#e2e8f0' } : undefined}
+                            >
+                              {isMe ? 'Du' : message.user.fullName}
+                            </span>
+                          </button>
+                        )}
                         <div className="flex items-center gap-1.5">
                           {message.isPinned ? <span className="surface-muted text-[11px]">📌</span> : null}
                           <time className={`text-[11px] ${isMe ? 'text-indigo-100/80' : 'text-slate-400'}`}>
@@ -3566,7 +3576,7 @@ export default function ChatPage() {
                                       Bearbeiten
                                     </button>
                                   ) : null}
-                                  {!isMe ? (
+                                  {!isMe && !isSystemMessage ? (
                                     <button className="message-menu-item" onClick={() => openMessageReportModal(message)}>
                                       Melden
                                     </button>
@@ -4193,10 +4203,10 @@ export default function ChatPage() {
                   value={finderQuery}
                   onChange={(event) => setFinderQuery(event.target.value)}
                 />
-                <div className="mt-3 space-y-4">
-                  <div>
+                <div className="media-finder-stack mt-3 space-y-4">
+                  <div className="media-finder-section">
                     <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Links ({visibleLinks.length})</h3>
-                    <ul className="mt-2 max-h-40 space-y-1.5 overflow-y-auto">
+                    <ul className="media-finder-list mt-2 max-h-40 space-y-1.5 overflow-y-auto">
                       {visibleLinks.map((item) => (
                         <li key={`${item.messageId}-${item.url}`} className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-2">
                           <a href={item.url} target="_blank" rel="noreferrer" className="break-all text-xs text-cyan-200 underline">
@@ -4208,9 +4218,9 @@ export default function ChatPage() {
                       {visibleLinks.length === 0 ? <li className="surface-muted text-xs">Keine Links gefunden.</li> : null}
                     </ul>
                   </div>
-                  <div>
+                  <div className="media-finder-section">
                     <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Bilder ({visibleImages.length})</h3>
-                    <div className="mt-2 grid max-h-48 grid-cols-3 gap-2 overflow-y-auto pr-1">
+                    <div className="media-finder-grid mt-2 grid max-h-48 grid-cols-3 gap-2 overflow-y-auto pr-1">
                       {visibleImages.map((item) => (
                         <a key={`${item.messageId}-${item.attachment.id}`} href={uploadUrl(item.attachment.id, token)} target="_blank" rel="noreferrer">
                           <img
@@ -4223,9 +4233,9 @@ export default function ChatPage() {
                       {visibleImages.length === 0 ? <p className="surface-muted col-span-3 text-xs">Keine Bilder gefunden.</p> : null}
                     </div>
                   </div>
-                  <div>
+                  <div className="media-finder-section">
                     <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Dateien ({visibleFiles.length})</h3>
-                    <ul className="mt-2 max-h-40 space-y-1.5 overflow-y-auto">
+                    <ul className="media-finder-list mt-2 max-h-40 space-y-1.5 overflow-y-auto">
                       {visibleFiles.map((item) => (
                         <li key={`${item.messageId}-${item.attachment.id}`} className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-2">
                           <a href={uploadUrl(item.attachment.id, token)} target="_blank" rel="noreferrer" className="text-xs text-cyan-200 underline">

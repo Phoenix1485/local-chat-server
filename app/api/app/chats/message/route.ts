@@ -55,6 +55,21 @@ export async function POST(request: Request): Promise<Response> {
       return jsonError(textError, 422);
     }
   }
+  const systemCommand = /^\/system(?:\s+([\s\S]+))?$/i.exec(text);
+  const sendAsSystem = Boolean(systemCommand);
+  if (sendAsSystem) {
+    if (auth.session.user.role !== 'admin' && auth.session.user.role !== 'superadmin') {
+      return jsonError('Only admins and superadmins can send system messages.', 403);
+    }
+    text = (systemCommand?.[1] ?? '').trim();
+    if (!text) {
+      return jsonError('System message cannot be empty.', 422);
+    }
+    const textError = validateMessage(text, 4000);
+    if (textError) {
+      return jsonError(textError, 422);
+    }
+  }
 
   const attachmentIds = Array.isArray(payload.attachmentIds) ? payload.attachmentIds : [];
   const hasInvalidAttachmentId = attachmentIds.some((id) => typeof id !== 'string' || !isUuid(id));
@@ -107,6 +122,7 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const message = await socialStore.addMessage(auth.session.user.id, chatId, {
       text,
+      asSystem: sendAsSystem,
       attachmentIds,
       replyToMessageId: replyToMessageId || null,
       gif: hasGif

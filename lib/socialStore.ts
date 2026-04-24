@@ -384,6 +384,11 @@ type StoredPollOption = {
 type StoredMessageMeta = {
   attachments?: AppChatAttachment[];
   gif?: AppChatGif | null;
+  systemSender?: {
+    actorUserId: string;
+    actorName: string;
+    at: number;
+  } | null;
   replyTo?: {
     id: string;
     authorName: string;
@@ -412,6 +417,7 @@ type AddMessageInput = {
   text?: string;
   attachmentIds?: string[];
   replyToMessageId?: string | null;
+  asSystem?: boolean;
   gif?: {
     url: string;
     previewUrl?: string | null;
@@ -764,6 +770,22 @@ const DEFAULT_USER_PREFERENCES: AppUserPreferences = {
   expandArchivedChats: false
 };
 
+const SYSTEM_PROFILE: AppUserProfile = {
+  id: 'system',
+  username: 'system',
+  firstName: 'System',
+  lastName: '',
+  fullName: 'System',
+  legalName: 'System',
+  bio: '',
+  email: null,
+  avatarUpdatedAt: null,
+  role: 'admin',
+  accentColor: '#a7f3d0',
+  chatBackground: 'midnight',
+  chatBackgroundStyle: null
+};
+
 function mapUserPreferences(row?: Partial<UserPreferencesRow> | null): AppUserPreferences {
   if (!row) {
     return { ...DEFAULT_USER_PREFERENCES };
@@ -980,10 +1002,21 @@ function parseMessageMeta(raw: string | null): StoredMessageMeta {
             : ''
         }
       : null;
+    const systemSenderRaw = parsed.systemSender && typeof parsed.systemSender === 'object'
+      ? parsed.systemSender as Record<string, unknown>
+      : null;
+    const systemSender = systemSenderRaw
+      ? {
+          actorUserId: typeof systemSenderRaw.actorUserId === 'string' ? systemSenderRaw.actorUserId.trim() : '',
+          actorName: typeof systemSenderRaw.actorName === 'string' ? systemSenderRaw.actorName.trim() : '',
+          at: asNumber(systemSenderRaw.at, 0)
+        }
+      : null;
 
     return {
       attachments,
       gif,
+      systemSender: systemSender && systemSender.actorUserId && systemSender.at > 0 ? systemSender : null,
       poll,
       reactions,
       mentionUserIds,
@@ -1034,11 +1067,13 @@ function buildMessage(row: MessageRow, viewerUserId: string, readBy: AppChatRead
   }
   const deletedForAll = Boolean(meta.deletedForAll);
   const pinned = meta.pinned ?? null;
-  const userProfile = mapProfile(row);
+  const isSystem = Boolean(meta.systemSender);
+  const userProfile = isSystem ? { ...SYSTEM_PROFILE } : mapProfile(row);
   return {
     id: row.id,
     chatId: row.chat_id,
     user: userProfile,
+    isSystem,
     text: deletedForAll ? '' : row.text,
     createdAt: asNumber(row.created_at),
     editedAt: meta.editedAt ?? null,
@@ -1788,6 +1823,7 @@ export class SocialStore {
       gifUrl: string | null;
       pollQuestion: string | null;
       pollOptions: string[];
+      asSystem: boolean;
     }
   ): Promise<MessageRow | null> {
     const pool = getMysqlPool();
@@ -1828,8 +1864,12 @@ export class SocialStore {
       const rowGifUrl = meta.gif?.url ?? null;
       const rowPollQuestion = meta.poll?.question ?? null;
       const rowPollOptions = (meta.poll?.options ?? []).map((option) => option.text).sort();
+      const rowAsSystem = Boolean(meta.systemSender);
 
       if (row.text !== payload.text) {
+        continue;
+      }
+      if (rowAsSystem !== payload.asSystem) {
         continue;
       }
       if (rowReplyToId !== payload.replyToMessageId) {
@@ -1855,11 +1895,9 @@ export class SocialStore {
   }
 
   async setTyping(userId: string, chatId: string, isTyping: boolean): Promise<void> {
-    const role = await this.getMembershipRole(userId, chatId);
-    if (!role) {
-      throw new Error('Chat not accessible.');
-    }
-    await this.assertGroupUserCanPost(chatId, userId);
+    const access = await this.getChatAccess(userId, chatId);
+    this.assertChatAccessible(access);
+    await this.assertGroupUserCanPost(chatId, userId, access.account.global_role);
 
     const now = Date.now();
     this.cleanupTyping(now);
@@ -1919,10 +1957,10 @@ export class SocialStore {
     return rows.map((row) => mapProfile(row));
   }
 
-  private mapChatSummary(row: ChatSummaryRow): AppChatSummary {
+  private mapChatSummary(row: ChatSummaryRow, viewerGlobalRole: GlobalRole | null = null): AppChatSummary {
     const role = row.member_role ?? null;
     const canManageMembers = row.chat_type === 'group' && Boolean(
-      role && hasGroupCapability({ memberRole: role, globalRole: null }, 'manage_members')
+      hasGroupCapability({ memberRole: role, globalRole: viewerGlobalRole }, 'manage_members')
     );
     const inviteMode = row.chat_type === 'group' ? toGroupInviteMode(row.group_invite_mode) : null;
     const invitePolicy = row.chat_type === 'group' ? toGroupInvitePolicy(row.group_invite_policy) : null;
@@ -1954,6 +1992,124 @@ export class SocialStore {
     await this.ensureReady();
     const pool = getMysqlPool();
     const nowMinus24h = Date.now() - 24 * 60 * 60 * 1000;
+    const viewerAccount = await this.getAccountByUserId(userId);
+    if (!viewerAccount) {
+      throw new Error('Account not found.');
+    }
+
+    if (viewerAccount.global_role === 'superadmin') {
+      const [rows] = await pool.query<ChatSummaryRow[]>(
+        `
+          SELECT
+            c.id,
+            c.name,
+            c.chat_category_id,
+            c.created_by,
+            c.created_at,
+            c.updated_at,
+            c.chat_type,
+            c.group_invite_mode,
+            c.group_invite_policy,
+            c.group_everyone_mention_policy,
+            c.group_here_mention_policy,
+            c.group_invite_code,
+            c.group_auto_hide_24h,
+            COALESCE(cmp.is_archived, 0) AS is_archived,
+            COALESCE(cmp.notification_mode, 'mentions') AS notification_mode,
+            cmp.chat_background AS chat_background,
+            cmp.chat_background_style_json AS chat_background_style_json,
+            cm_user.member_role,
+            COUNT(DISTINCT cm_all.user_id) AS members_count,
+            MAX(m.created_at) AS last_message_at,
+            (
+              SELECT COUNT(*)
+              FROM messages um
+              WHERE um.chat_id = c.id
+                AND (c.chat_type <> 'group' OR c.group_auto_hide_24h = 0 OR um.created_at >= ?)
+                AND um.created_at > COALESCE(cr.last_read_at, 0)
+            ) AS unread_count,
+            (
+              SELECT COUNT(*)
+              FROM messages mm
+              WHERE mm.chat_id = c.id
+                AND (c.chat_type <> 'group' OR c.group_auto_hide_24h = 0 OR mm.created_at >= ?)
+                AND mm.created_at > COALESCE(cr.last_read_at, 0)
+                AND mm.user_id <> ?
+                AND (
+                  mm.text LIKE ?
+                  OR (
+                    JSON_VALID(mm.attachments_json)
+                    AND JSON_CONTAINS(
+                      COALESCE(JSON_EXTRACT(mm.attachments_json, '$.mentionUserIds'), JSON_ARRAY()),
+                      JSON_QUOTE(?)
+                    )
+                  )
+                )
+            ) AS mention_count,
+            SUBSTRING_INDEX(
+              GROUP_CONCAT(m.text ORDER BY m.created_at DESC SEPARATOR '\n'),
+              '\n',
+              1
+            ) AS last_message_text
+          FROM chats c
+          LEFT JOIN chat_memberships cm_user
+            ON cm_user.chat_id = c.id
+           AND cm_user.user_id = ?
+           AND cm_user.left_at IS NULL
+          LEFT JOIN chat_memberships cm_all
+            ON cm_all.chat_id = c.id
+           AND cm_all.left_at IS NULL
+          LEFT JOIN messages m
+            ON m.chat_id = c.id
+           AND (c.chat_type <> 'group' OR c.group_auto_hide_24h = 0 OR m.created_at >= ?)
+          LEFT JOIN chat_reads cr
+            ON cr.chat_id = c.id
+           AND cr.user_id = ?
+          LEFT JOIN chat_member_preferences cmp
+            ON cmp.chat_id = c.id
+           AND cmp.user_id = ?
+          WHERE c.deactivated_at IS NULL
+          GROUP BY
+            c.id,
+            c.name,
+            c.chat_category_id,
+            c.created_by,
+            c.created_at,
+            c.updated_at,
+            c.chat_type,
+            c.group_invite_mode,
+            c.group_invite_policy,
+            c.group_everyone_mention_policy,
+            c.group_here_mention_policy,
+            c.group_invite_code,
+            c.group_auto_hide_24h,
+            cmp.is_archived,
+            cmp.notification_mode,
+            cmp.chat_background,
+            cmp.chat_background_style_json,
+            cm_user.member_role,
+            cr.last_read_at
+          ORDER BY
+            c.chat_type = 'global' DESC,
+            COALESCE(cmp.is_archived, 0) ASC,
+            COALESCE(MAX(m.created_at), c.updated_at) DESC,
+            c.name ASC
+        `,
+        [
+          nowMinus24h,
+          nowMinus24h,
+          userId,
+          `%@${viewerAccount.username}%`,
+          userId,
+          userId,
+          nowMinus24h,
+          userId,
+          userId
+        ]
+      );
+
+      return rows.map((row) => this.mapChatSummary(row, viewerAccount.global_role));
+    }
 
     const [rows] = await pool.query<ChatSummaryRow[]>(
       `
@@ -2058,7 +2214,7 @@ export class SocialStore {
       [nowMinus24h, nowMinus24h, userId, nowMinus24h]
     );
 
-    return rows.map((row) => this.mapChatSummary(row));
+    return rows.map((row) => this.mapChatSummary(row, viewerAccount.global_role));
   }
 
   async listChatCategories(): Promise<AppChatCategory[]> {
@@ -2183,10 +2339,8 @@ export class SocialStore {
     await this.ensureReady();
     const pool = getMysqlPool();
     const now = Date.now();
-    const role = await this.getMembershipRole(userId, chatId);
-    if (!role) {
-      throw new Error('Chat not accessible.');
-    }
+    const access = await this.getChatAccess(userId, chatId);
+    this.assertChatAccessible(access);
 
     const [rows] = await pool.query<ChatPreferenceRow[]>(
       `
@@ -3243,6 +3397,31 @@ export class SocialStore {
     return isGroupMemberRole(rows[0]?.member_role) ? rows[0].member_role : null;
   }
 
+  private async getChatAccess(userId: string, chatId: string): Promise<{
+    account: AccountRow;
+    role: GroupMemberRole | null;
+    isSuperadmin: boolean;
+  }> {
+    const [account, role] = await Promise.all([
+      this.getAccountByUserId(userId),
+      this.getMembershipRole(userId, chatId)
+    ]);
+    if (!account) {
+      throw new Error('Account not found.');
+    }
+    return {
+      account,
+      role,
+      isSuperadmin: account.global_role === 'superadmin'
+    };
+  }
+
+  private assertChatAccessible(access: { role: GroupMemberRole | null; isSuperadmin: boolean }): void {
+    if (!access.role && !access.isSuperadmin) {
+      throw new Error('Chat not accessible.');
+    }
+  }
+
   private async getGroupChatControl(chatId: string): Promise<GroupChatControlRow | null> {
     await this.ensureReady();
     const pool = getMysqlPool();
@@ -3325,7 +3504,10 @@ export class SocialStore {
     }
   }
 
-  private async assertGroupUserCanPost(chatId: string, userId: string): Promise<void> {
+  private async assertGroupUserCanPost(chatId: string, userId: string, globalRole?: GlobalRole | null): Promise<void> {
+    if (globalRole === 'superadmin') {
+      return;
+    }
     const restriction = await this.getGroupMemberRestriction(chatId, userId);
     const now = Date.now();
     const mutedUntil = restriction ? asNullableNumber(restriction.muted_until) : null;
@@ -4665,13 +4847,12 @@ export class SocialStore {
     const pool = getMysqlPool();
     const now = Date.now();
 
-    const [role, viewerAccount] = await Promise.all([
-      this.getMembershipRole(userId, chatId),
-      this.getAccountByUserId(userId)
-    ]);
-    if (!role) {
+    const access = await this.getChatAccess(userId, chatId);
+    if (!access.role && !access.isSuperadmin) {
       return null;
     }
+    const role = access.role;
+    const viewerAccount = access.account;
 
     const [readRows] = await pool.query<RowDataPacket[]>(
       `
@@ -4709,6 +4890,10 @@ export class SocialStore {
           a.avatar_updated_at,
           cm.joined_at,
           cm.member_role,
+          gmr.muted_until,
+          gmr.mute_reason,
+          gmr.banned_at,
+          gmr.ban_reason,
           CASE
             WHEN EXISTS (
               SELECT 1
@@ -4721,6 +4906,9 @@ export class SocialStore {
           END AS is_online
         FROM chat_memberships cm
         JOIN auth_accounts a ON a.user_id = cm.user_id
+        LEFT JOIN group_member_restrictions gmr
+          ON gmr.chat_id = cm.chat_id
+         AND gmr.user_id = cm.user_id
         WHERE cm.chat_id = ?
           AND cm.left_at IS NULL
         ORDER BY
@@ -4798,7 +4986,7 @@ export class SocialStore {
       messages,
       unreadCountAtOpen,
       firstUnreadMessageId,
-      groupSettings: groupChat ? this.buildGroupSettings(groupChat, role, viewerAccount?.global_role ?? null) : null
+      groupSettings: groupChat ? this.buildGroupSettings(groupChat, role, viewerAccount.global_role) : null
     };
   }
 
@@ -4990,10 +5178,8 @@ export class SocialStore {
     await this.ensureReady();
     const pool = getMysqlPool();
 
-    const role = await this.getMembershipRole(userId, chatId);
-    if (!role) {
-      throw new Error('Chat not accessible.');
-    }
+    const access = await this.getChatAccess(userId, chatId);
+    this.assertChatAccessible(access);
 
     if (file.size <= 0 || file.size > CHAT_LIMITS.uploadMaxBytes) {
       throw new Error('Upload size is invalid.');
@@ -5048,8 +5234,8 @@ export class SocialStore {
       return null;
     }
 
-    const role = await this.getMembershipRole(userId, upload.chat_id);
-    if (!role) {
+    const access = await this.getChatAccess(userId, upload.chat_id);
+    if (!access.role && !access.isSuperadmin) {
       return null;
     }
     return upload;
@@ -5067,16 +5253,19 @@ export class SocialStore {
     if (ipNorm) {
       await this.enforceIpRateLimit(ipNorm, `chat:${chatId}`, CHAT_LIMITS.spamLongWindowLimit * 3, CHAT_LIMITS.spamLongWindowMs, 'chat-rate');
     }
-    const role = await this.getMembershipRole(userId, chatId);
-    if (!role) {
-      throw new Error('Chat not accessible.');
-    }
-    await this.assertGroupUserCanPost(chatId, userId);
-
     const account = await this.getAccountByUserId(userId);
     if (!account) {
       throw new Error('User account not found.');
     }
+    const asSystem = input.asSystem === true;
+    if (asSystem && account.global_role !== 'admin' && account.global_role !== 'superadmin') {
+      throw new PermissionDeniedError('Only admins and superadmins can send system messages.');
+    }
+    const role = await this.getMembershipRole(userId, chatId);
+    if (!role && account.global_role !== 'superadmin') {
+      throw new Error('Chat not accessible.');
+    }
+    await this.assertGroupUserCanPost(chatId, userId, account.global_role);
 
     const [chatRows] = await pool.query<RowDataPacket[]>(
       `
@@ -5111,7 +5300,8 @@ export class SocialStore {
       throw error;
     }
 
-    await this.enforceGroupMessageCooldown(userId, chatId, chatType, role, account.global_role, groupMessageCooldownMs, now);
+    const effectiveRole: GroupMemberRole = role ?? 'owner';
+    await this.enforceGroupMessageCooldown(userId, chatId, chatType, effectiveRole, account.global_role, groupMessageCooldownMs, now);
 
     const attachmentIds = normalizeIds(input.attachmentIds ?? []).slice(0, 8);
     let attachments: AppChatAttachment[] = [];
@@ -5206,7 +5396,8 @@ export class SocialStore {
       attachmentIds: attachments.map((attachment) => attachment.id).sort(),
       gifUrl: gifInput?.url ?? null,
       pollQuestion: storedPoll?.question ?? null,
-      pollOptions: (storedPoll?.options ?? []).map((option) => option.text).sort()
+      pollOptions: (storedPoll?.options ?? []).map((option) => option.text).sort(),
+      asSystem
     });
     if (duplicate) {
       const existing = await this.mapRowToMessage(duplicate, userId);
@@ -5219,16 +5410,24 @@ export class SocialStore {
       chatId,
       chatType,
       userId,
-      role,
+      effectiveRole,
       account.global_role,
       messageText,
       toGroupMentionPolicy(chatRow.group_everyone_mention_policy),
       toGroupMentionPolicy(chatRow.group_here_mention_policy)
     );
 
+    const displayName = `${account.first_name} ${account.last_name}`.trim() || account.username;
     const meta: StoredMessageMeta = {
       attachments,
       gif: gifInput,
+      systemSender: asSystem
+        ? {
+            actorUserId: userId,
+            actorName: displayName,
+            at: now
+          }
+        : null,
       poll: storedPoll,
       reactions: {},
       mentionUserIds,
@@ -5239,7 +5438,6 @@ export class SocialStore {
     };
 
     const messageId = randomUUID();
-    const displayName = `${account.first_name} ${account.last_name}`.trim() || account.username;
 
     await pool.query<ResultSetHeader>(
       `
@@ -5312,10 +5510,8 @@ export class SocialStore {
   async editMessage(userId: string, chatId: string, messageId: string, text: string): Promise<AppChatMessage> {
     await this.ensureReady();
     const pool = getMysqlPool();
-    const role = await this.getMembershipRole(userId, chatId);
-    if (!role) {
-      throw new Error('Chat not accessible.');
-    }
+    const access = await this.getChatAccess(userId, chatId);
+    this.assertChatAccessible(access);
 
     const row = await this.loadMessageRow(chatId, messageId);
     if (!row) {
@@ -5360,10 +5556,8 @@ export class SocialStore {
   ): Promise<{ removedForMe: boolean; message: AppChatMessage | null }> {
     await this.ensureReady();
     const pool = getMysqlPool();
-    const role = await this.getMembershipRole(userId, chatId);
-    if (!role) {
-      throw new Error('Chat not accessible.');
-    }
+    const access = await this.getChatAccess(userId, chatId);
+    this.assertChatAccessible(access);
 
     const row = await this.loadMessageRow(chatId, messageId);
     if (!row) {
@@ -5421,10 +5615,8 @@ export class SocialStore {
   async votePoll(userId: string, chatId: string, messageId: string, optionId: string): Promise<AppChatMessage> {
     await this.ensureReady();
     const pool = getMysqlPool();
-    const role = await this.getMembershipRole(userId, chatId);
-    if (!role) {
-      throw new Error('Chat not accessible.');
-    }
+    const access = await this.getChatAccess(userId, chatId);
+    this.assertChatAccessible(access);
 
     const row = await this.loadMessageRow(chatId, messageId);
     if (!row) {
@@ -5472,10 +5664,8 @@ export class SocialStore {
   async toggleReaction(userId: string, chatId: string, messageId: string, emoji: string): Promise<AppChatMessage> {
     await this.ensureReady();
     const pool = getMysqlPool();
-    const role = await this.getMembershipRole(userId, chatId);
-    if (!role) {
-      throw new Error('Chat not accessible.');
-    }
+    const access = await this.getChatAccess(userId, chatId);
+    this.assertChatAccessible(access);
 
     const row = await this.loadMessageRow(chatId, messageId);
     if (!row) {
@@ -5525,10 +5715,8 @@ export class SocialStore {
   async togglePinMessage(userId: string, chatId: string, messageId: string): Promise<AppChatMessage> {
     await this.ensureReady();
     const pool = getMysqlPool();
-    const role = await this.getMembershipRole(userId, chatId);
-    if (!role) {
-      throw new Error('Chat not accessible.');
-    }
+    const access = await this.getChatAccess(userId, chatId);
+    this.assertChatAccessible(access);
 
     const canPin = await this.canPinMessage(userId, chatId);
     if (!canPin) {

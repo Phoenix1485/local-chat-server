@@ -129,6 +129,7 @@ export type AppChatMessage = {
   id: string;
   chatId: string;
   user: AppUserProfile;
+  isSystem: boolean;
   text: string;
   createdAt: number;
   editedAt: number | null;
