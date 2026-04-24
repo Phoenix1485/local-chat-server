@@ -17,6 +17,7 @@ import { normalizeChatBackgroundStyle, normalizeName } from '@/lib/validation';
 import type {
   AppChatAttachment,
   AppChatBackgroundStyle,
+  AppChatCategory,
   AppChatNotificationMode,
   AppChatPreferences,
   AppBootstrap,
@@ -82,6 +83,7 @@ type CountRow = RowDataPacket & {
 type ChatSummaryRow = RowDataPacket & {
   id: string;
   name: string;
+  chat_category_id: string | null;
   created_by: string | null;
   created_at: number;
   updated_at: number;
@@ -102,6 +104,17 @@ type ChatSummaryRow = RowDataPacket & {
   notification_mode: AppChatNotificationMode;
   chat_background: ChatBackgroundPreset | null;
   chat_background_style_json: string | null;
+};
+
+type ChatCategoryRow = RowDataPacket & {
+  id: string;
+  name: string;
+  name_norm: string;
+  sort_order: number;
+  created_by: string | null;
+  created_at: number;
+  updated_at: number;
+  group_count: number;
 };
 
 type GroupChatControlRow = RowDataPacket & {
@@ -779,6 +792,18 @@ function mapChatPreferences(
     notificationMode: toChatNotificationMode(row?.notification_mode),
     chatBackground,
     chatBackgroundStyle: parseChatBackgroundStyleJson(row?.chat_background_style_json)
+  };
+}
+
+function mapChatCategory(row: ChatCategoryRow): AppChatCategory {
+  return {
+    id: row.id,
+    name: row.name,
+    createdBy: row.created_by ?? null,
+    createdAt: asNumber(row.created_at),
+    updatedAt: asNumber(row.updated_at),
+    sortOrder: asNumber(row.sort_order),
+    groupCount: asNumber(row.group_count)
   };
 }
 
@@ -1907,6 +1932,7 @@ export class SocialStore {
       id: row.id,
       name: row.name,
       kind: row.chat_type,
+      categoryId: row.chat_type === 'group' ? (row.chat_category_id?.trim() || null) : null,
       createdBy: row.created_by,
       createdAt: asNumber(row.created_at),
       updatedAt: asNumber(row.updated_at),
@@ -1934,6 +1960,7 @@ export class SocialStore {
         SELECT
           c.id,
           c.name,
+          c.chat_category_id,
           c.created_by,
           c.created_at,
           c.updated_at,
@@ -2004,6 +2031,7 @@ export class SocialStore {
         GROUP BY
           c.id,
           c.name,
+          c.chat_category_id,
           c.created_by,
           c.created_at,
           c.updated_at,
@@ -2031,6 +2059,42 @@ export class SocialStore {
     );
 
     return rows.map((row) => this.mapChatSummary(row));
+  }
+
+  async listChatCategories(): Promise<AppChatCategory[]> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const [rows] = await pool.query<ChatCategoryRow[]>(
+      `
+        SELECT
+          cc.id,
+          cc.name,
+          cc.name_norm,
+          cc.sort_order,
+          cc.created_by,
+          cc.created_at,
+          cc.updated_at,
+          COUNT(c.id) AS group_count
+        FROM chat_categories cc
+        LEFT JOIN chats c
+          ON c.chat_category_id = cc.id
+         AND c.chat_type = 'group'
+         AND c.deactivated_at IS NULL
+        GROUP BY
+          cc.id,
+          cc.name,
+          cc.name_norm,
+          cc.sort_order,
+          cc.created_by,
+          cc.created_at,
+          cc.updated_at
+        ORDER BY
+          cc.sort_order ASC,
+          cc.name ASC
+      `
+    );
+
+    return rows.map((row) => mapChatCategory(row));
   }
 
   async getUserPreferences(userId: string): Promise<AppUserPreferences> {
@@ -2677,7 +2741,8 @@ export class SocialStore {
       throw new Error('Account not found.');
     }
 
-    const [chats, friends, requests, nicknameSlots, preferences] = await Promise.all([
+    const [chatCategories, chats, friends, requests, nicknameSlots, preferences] = await Promise.all([
+      this.listChatCategories(),
       this.listChats(userId),
       this.listFriends(userId),
       this.listFriendRequests(userId),
@@ -2695,6 +2760,7 @@ export class SocialStore {
     return {
       me: mapProfile(meAccount, { includeEmail: true, displayName: globalNickname, nicknameSlots }),
       preferences,
+      chatCategories,
       chats,
       activeChatId,
       friends,
@@ -3330,6 +3396,195 @@ export class SocialStore {
     return Date.now() - 24 * 60 * 60 * 1000;
   }
 
+  private async assertCanManageChatCategories(userId: string): Promise<void> {
+    const account = await this.getAccountByUserId(userId);
+    if (!account) {
+      throw new Error('Account not found.');
+    }
+    if (account.global_role !== 'admin' && account.global_role !== 'superadmin') {
+      throw new PermissionDeniedError('Only admins and superadmins can manage chat categories.');
+    }
+  }
+
+  private async getChatCategoryRow(categoryId: string): Promise<ChatCategoryRow | null> {
+    await this.ensureReady();
+    const pool = getMysqlPool();
+    const [rows] = await pool.query<ChatCategoryRow[]>(
+      `
+        SELECT
+          cc.id,
+          cc.name,
+          cc.name_norm,
+          cc.sort_order,
+          cc.created_by,
+          cc.created_at,
+          cc.updated_at,
+          COUNT(c.id) AS group_count
+        FROM chat_categories cc
+        LEFT JOIN chats c
+          ON c.chat_category_id = cc.id
+         AND c.chat_type = 'group'
+         AND c.deactivated_at IS NULL
+        WHERE cc.id = ?
+        GROUP BY
+          cc.id,
+          cc.name,
+          cc.name_norm,
+          cc.sort_order,
+          cc.created_by,
+          cc.created_at,
+          cc.updated_at
+        LIMIT 1
+      `,
+      [categoryId]
+    );
+
+    return rows[0] ?? null;
+  }
+
+  private async resolveChatCategoryId(categoryId?: string | null): Promise<string | null> {
+    const normalizedCategoryId = categoryId?.trim() ?? '';
+    if (!normalizedCategoryId) {
+      return null;
+    }
+
+    const category = await this.getChatCategoryRow(normalizedCategoryId);
+    if (!category) {
+      throw new Error('Category not found.');
+    }
+    return category.id;
+  }
+
+  async createChatCategory(userId: string, name: string): Promise<AppChatCategory> {
+    await this.ensureReady();
+    await this.assertCanManageChatCategories(userId);
+    const pool = getMysqlPool();
+    const now = Date.now();
+    const normalizedName = normalizeName(name).slice(0, 80);
+    const nameNorm = normalizedName.toLowerCase();
+    const categoryId = randomUUID();
+
+    const [duplicateRows] = await pool.query<RowDataPacket[]>(
+      'SELECT 1 FROM chat_categories WHERE name_norm = ? LIMIT 1',
+      [nameNorm]
+    );
+    if (duplicateRows.length > 0) {
+      throw new Error('Category name already exists.');
+    }
+
+    const [sortRows] = await pool.query<RowDataPacket[]>(
+      'SELECT COALESCE(MAX(sort_order), -1) AS max_sort_order FROM chat_categories'
+    );
+    const sortOrder = asNumber(sortRows[0]?.max_sort_order, -1) + 1;
+
+    await pool.query<ResultSetHeader>(
+      `
+        INSERT INTO chat_categories (id, name, name_norm, sort_order, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+      [categoryId, normalizedName, nameNorm, sortOrder, userId, now, now]
+    );
+
+    const category = await this.getChatCategoryRow(categoryId);
+    if (!category) {
+      throw new Error('Category could not be loaded.');
+    }
+    return mapChatCategory(category);
+  }
+
+  async renameChatCategory(userId: string, categoryId: string, name: string): Promise<AppChatCategory> {
+    await this.ensureReady();
+    await this.assertCanManageChatCategories(userId);
+    const pool = getMysqlPool();
+    const now = Date.now();
+    const normalizedName = normalizeName(name).slice(0, 80);
+    const nameNorm = normalizedName.toLowerCase();
+
+    const category = await this.getChatCategoryRow(categoryId);
+    if (!category) {
+      throw new Error('Category not found.');
+    }
+
+    const [duplicateRows] = await pool.query<RowDataPacket[]>(
+      'SELECT 1 FROM chat_categories WHERE name_norm = ? AND id <> ? LIMIT 1',
+      [nameNorm, categoryId]
+    );
+    if (duplicateRows.length > 0) {
+      throw new Error('Category name already exists.');
+    }
+
+    await pool.query<ResultSetHeader>(
+      'UPDATE chat_categories SET name = ?, name_norm = ?, updated_at = ? WHERE id = ?',
+      [normalizedName, nameNorm, now, categoryId]
+    );
+
+    const updated = await this.getChatCategoryRow(categoryId);
+    if (!updated) {
+      throw new Error('Category not found.');
+    }
+    return mapChatCategory(updated);
+  }
+
+  async moveChatCategory(userId: string, categoryId: string, direction: 'up' | 'down'): Promise<void> {
+    await this.ensureReady();
+    await this.assertCanManageChatCategories(userId);
+    const pool = getMysqlPool();
+    const categories = await this.listChatCategories();
+    const currentIndex = categories.findIndex((category) => category.id === categoryId);
+    if (currentIndex < 0) {
+      throw new Error('Category not found.');
+    }
+
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= categories.length) {
+      return;
+    }
+
+    const source = categories[currentIndex];
+    const target = categories[targetIndex];
+
+    await pool.query<ResultSetHeader>('UPDATE chat_categories SET sort_order = ? WHERE id = ?', [target.sortOrder, source.id]);
+    await pool.query<ResultSetHeader>('UPDATE chat_categories SET sort_order = ? WHERE id = ?', [source.sortOrder, target.id]);
+  }
+
+  async deleteChatCategory(userId: string, categoryId: string): Promise<void> {
+    await this.ensureReady();
+    await this.assertCanManageChatCategories(userId);
+    const pool = getMysqlPool();
+
+    const category = await this.getChatCategoryRow(categoryId);
+    if (!category) {
+      throw new Error('Category not found.');
+    }
+
+    await pool.query<ResultSetHeader>('UPDATE chats SET chat_category_id = NULL WHERE chat_category_id = ?', [categoryId]);
+    await pool.query<ResultSetHeader>('DELETE FROM chat_categories WHERE id = ?', [categoryId]);
+  }
+
+  async setGroupChatCategory(userId: string, chatId: string, categoryId?: string | null): Promise<void> {
+    await this.ensureReady();
+    await this.assertCanManageChatCategories(userId);
+    const pool = getMysqlPool();
+    const nextCategoryId = await this.resolveChatCategoryId(categoryId);
+
+    const [chatRows] = await pool.query<RowDataPacket[]>(
+      `
+        SELECT id, chat_type, deactivated_at
+        FROM chats
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [chatId]
+    );
+
+    const chat = chatRows[0];
+    if (!chat?.id || chat.chat_type !== 'group' || asNullableNumber(chat.deactivated_at)) {
+      throw new Error('Only active group chats can be assigned to a category.');
+    }
+
+    await pool.query<ResultSetHeader>('UPDATE chats SET chat_category_id = ? WHERE id = ?', [nextCategoryId, chatId]);
+  }
+
   async createOrGetDirectChat(userId: string, targetUserId: string): Promise<AppChatSummary> {
     await this.ensureReady();
     const pool = getMysqlPool();
@@ -3433,19 +3688,21 @@ export class SocialStore {
     return chat;
   }
 
-  async createGroupChat(userId: string, name: string, memberIds: string[]): Promise<AppChatSummary> {
+  async createGroupChat(userId: string, name: string, memberIds: string[], categoryId?: string | null): Promise<AppChatSummary> {
     await this.ensureReady();
     const pool = getMysqlPool();
     const now = Date.now();
     const chatId = randomUUID();
     const normalizedName = name.trim().slice(0, 80);
     const uniqueMembers = normalizeIds(memberIds).filter((id) => id !== userId);
+    const nextCategoryId = await this.resolveChatCategoryId(categoryId);
 
     await pool.query<ResultSetHeader>(
       `
         INSERT INTO chats (
           id,
           name,
+          chat_category_id,
           created_by,
           created_at,
           updated_at,
@@ -3459,9 +3716,9 @@ export class SocialStore {
           deactivated_at,
           deactivated_by
         )
-        VALUES (?, ?, ?, ?, ?, 0, 'group', 'direct', 'admins', NULL, 0, NULL, NULL, NULL)
+        VALUES (?, ?, ?, ?, ?, ?, 0, 'group', 'direct', 'admins', NULL, 0, NULL, NULL, NULL)
       `,
-      [chatId, normalizedName, userId, now, now]
+      [chatId, normalizedName, nextCategoryId, userId, now, now]
     );
 
     await pool.query<ResultSetHeader>(

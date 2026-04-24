@@ -14,6 +14,7 @@ import type {
   AppChatContext,
   AppChatGif,
   AppChatMessage,
+  AppChatSummary,
   AppChatReadReceipt,
   AppGroupSettings,
   AppModerationLog,
@@ -374,6 +375,22 @@ function moderationReportStatusLabel(status: AppModerationReportStatus): string 
   return map[status];
 }
 
+function isCategoryManager(role: GlobalRole | null | undefined): boolean {
+  return role === 'admin' || role === 'superadmin';
+}
+
+function chatNavPrefix(kind: 'global' | 'group' | 'direct'): string {
+  if (kind === 'group') return '#';
+  if (kind === 'direct') return 'DM';
+  return 'GL';
+}
+
+function chatKindLabel(kind: 'global' | 'group' | 'direct'): string {
+  if (kind === 'group') return 'Gruppe';
+  if (kind === 'direct') return 'Direkt';
+  return 'Global';
+}
+
 function hexToRgba(hex: string | undefined, alpha: number): string {
   const normalized = (hex ?? '').trim();
   const match = /^#([0-9a-fA-F]{6})$/.exec(normalized);
@@ -637,9 +654,14 @@ export default function ChatPage() {
   const [discoverQuery, setDiscoverQuery] = useState('');
   const [discoverUsers, setDiscoverUsers] = useState<AppUserProfile[]>([]);
   const [groupName, setGroupName] = useState('');
+  const [groupCategoryId, setGroupCategoryId] = useState('');
   const [groupMemberIds, setGroupMemberIds] = useState<string[]>([]);
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [showGroupManageModal, setShowGroupManageModal] = useState(false);
+  const [showCategoryManageModal, setShowCategoryManageModal] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [categoryRenameDrafts, setCategoryRenameDrafts] = useState<Record<string, string>>({});
+  const [collapsedNavSections, setCollapsedNavSections] = useState<Record<string, boolean>>({});
   const [groupOverviewTab, setGroupOverviewTab] = useState<GroupOverviewTab>('overview');
   const [finderQuery, setFinderQuery] = useState('');
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
@@ -719,6 +741,7 @@ export default function ChatPage() {
   const composerActionMenuRef = useRef<HTMLDivElement | null>(null);
   const groupManageModalRef = useRef<HTMLDivElement | null>(null);
   const groupCreateModalRef = useRef<HTMLDivElement | null>(null);
+  const categoryManageModalRef = useRef<HTMLDivElement | null>(null);
   const gifModalRef = useRef<HTMLDivElement | null>(null);
   const pollModalRef = useRef<HTMLDivElement | null>(null);
   const shortcutModalRef = useRef<HTMLDivElement | null>(null);
@@ -727,6 +750,7 @@ export default function ChatPage() {
   const profileModalRef = useRef<HTMLDivElement | null>(null);
 
   const activeChatId = bootstrap?.activeChatId ?? null;
+  const chatCategories = bootstrap?.chatCategories ?? [];
   const chats = bootstrap?.chats ?? [];
   const me = bootstrap?.me ?? null;
   const activeChat = chats.find((chat) => chat.id === activeChatId) ?? null;
@@ -746,10 +770,26 @@ export default function ChatPage() {
   const activeProfileMember =
     profileCard && context?.chat.kind === 'group' ? members.find((member) => member.user.id === profileCard.id) ?? null : null;
   const appOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+  const canManageChatCategories = isCategoryManager(me?.role);
   const activeChats = chats.filter((chat) => !chat.preferences.archived);
   const archivedChats = chats.filter((chat) => chat.preferences.archived);
   const archivedSectionExpanded = userPreferences.expandArchivedChats || Boolean(activeChat?.preferences.archived);
-  const railChats = chats.filter((chat) => !chat.preferences.archived || chat.id === activeChatId);
+  const categoryLookup = useMemo(() => new Map(chatCategories.map((category) => [category.id, category])), [chatCategories]);
+  const globalChats = activeChats.filter((chat) => chat.kind === 'global');
+  const directChats = activeChats.filter((chat) => chat.kind === 'direct');
+  const groupChats = activeChats.filter((chat) => chat.kind === 'group');
+  const groupedCategoryChats = useMemo(
+    () =>
+      chatCategories
+        .map((category) => ({
+          category,
+          chats: groupChats.filter((chat) => chat.categoryId === category.id)
+        }))
+        .filter(({ chats: items }) => items.length > 0 || canManageChatCategories),
+    [canManageChatCategories, chatCategories, groupChats]
+  );
+  const uncategorizedGroupChats = groupChats.filter((chat) => !chat.categoryId);
+  const assignableVisibleGroupChats = chats.filter((chat) => chat.kind === 'group');
 
   const discoverCandidates = useMemo(
     () => discoverUsers.filter((user) => !members.some((member) => member.user.id === user.id)),
@@ -957,13 +997,23 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => {
-    const hasAnyModalOpen = Boolean(showGroupManageModal || showGroupModal || showGifModal || showPollModal || showShortcutModal || deleteTarget || profileCard);
+    const hasAnyModalOpen = Boolean(
+      showGroupManageModal ||
+      showCategoryManageModal ||
+      showGroupModal ||
+      showGifModal ||
+      showPollModal ||
+      showShortcutModal ||
+      deleteTarget ||
+      profileCard
+    );
     if (!hasAnyModalOpen) {
       return;
     }
 
     const getActiveModal = (): HTMLDivElement | null => {
       if (showGroupManageModal) return groupManageModalRef.current;
+      if (showCategoryManageModal) return categoryManageModalRef.current;
       if (showGroupModal) return groupCreateModalRef.current;
       if (showGifModal) return gifModalRef.current;
       if (showPollModal) return pollModalRef.current;
@@ -989,6 +1039,7 @@ export default function ChatPage() {
 
     const closeActiveModal = () => {
       if (showGroupManageModal) setShowGroupManageModal(false);
+      else if (showCategoryManageModal) setShowCategoryManageModal(false);
       else if (showGroupModal) setShowGroupModal(false);
       else if (showGifModal) setShowGifModal(false);
       else if (showPollModal) setShowPollModal(false);
@@ -1037,7 +1088,7 @@ export default function ChatPage() {
 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [showGroupManageModal, showGroupModal, showGifModal, showPollModal, showShortcutModal, deleteTarget, profileCard]);
+  }, [showGroupManageModal, showCategoryManageModal, showGroupModal, showGifModal, showPollModal, showShortcutModal, deleteTarget, profileCard]);
 
   useEffect(() => {
     if (!bootstrap) {
@@ -1057,6 +1108,25 @@ export default function ChatPage() {
       !dismissed
     );
   }, [bootstrap, userPreferences.desktopNotifications]);
+
+  useEffect(() => {
+    if (!showGroupModal) {
+      return;
+    }
+    if (groupCategoryId && chatCategories.some((category) => category.id === groupCategoryId)) {
+      return;
+    }
+    setGroupCategoryId(chatCategories[0]?.id ?? '');
+  }, [chatCategories, groupCategoryId, showGroupModal]);
+
+  useEffect(() => {
+    if (!showCategoryManageModal) {
+      return;
+    }
+    setCategoryRenameDrafts(
+      Object.fromEntries(chatCategories.map((category) => [category.id, category.name]))
+    );
+  }, [chatCategories, showCategoryManageModal]);
 
   useEffect(() => {
     const syncConnection = () => {
@@ -1451,7 +1521,7 @@ export default function ChatPage() {
   }, [activeChatId, token]);
 
   useEffect(() => {
-    if (!showGroupModal && !showGroupManageModal && !showGifModal && !showPollModal && !showShortcutModal && !showEmojiPanel && !showMessageFilterMenu && !showComposerActionMenu) {
+    if (!showGroupModal && !showGroupManageModal && !showCategoryManageModal && !showGifModal && !showPollModal && !showShortcutModal && !showEmojiPanel && !showMessageFilterMenu && !showComposerActionMenu) {
       return;
     }
 
@@ -1459,6 +1529,7 @@ export default function ChatPage() {
       if (event.key === 'Escape') {
         setShowGroupModal(false);
         setShowGroupManageModal(false);
+        setShowCategoryManageModal(false);
         setShowGifModal(false);
         setShowPollModal(false);
         setShowShortcutModal(false);
@@ -1472,7 +1543,7 @@ export default function ChatPage() {
     return () => {
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [showGroupModal, showGroupManageModal, showGifModal, showPollModal, showShortcutModal, showEmojiPanel, showMessageFilterMenu, showComposerActionMenu]);
+  }, [showGroupModal, showGroupManageModal, showCategoryManageModal, showGifModal, showPollModal, showShortcutModal, showEmojiPanel, showMessageFilterMenu, showComposerActionMenu]);
 
   useEffect(() => {
     if (!showMessageFilterMenu && !showComposerActionMenu) {
@@ -1542,6 +1613,7 @@ export default function ChatPage() {
           return;
         }
         setGroupName('');
+        setGroupCategoryId(chatCategories[0]?.id ?? '');
         setGroupMemberIds([]);
         setDiscoverQuery('');
         setShowGroupModal(true);
@@ -1580,7 +1652,7 @@ export default function ChatPage() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [context?.chat.kind]);
+  }, [context?.chat.kind, chatCategories]);
 
   const fetchGifPage = async (cursor: string | null, append: boolean) => {
     if (!token || !showGifModal) {
@@ -2335,10 +2407,11 @@ export default function ChatPage() {
     try {
       const payload = (await api('/api/app/chats/group', token, {
         method: 'POST',
-        body: JSON.stringify({ name: groupName, memberIds: groupMemberIds })
+        body: JSON.stringify({ name: groupName, memberIds: groupMemberIds, categoryId: groupCategoryId || null })
       })) as { chat: { id: string } };
 
       setGroupName('');
+      setGroupCategoryId(chatCategories[0]?.id ?? '');
       setGroupMemberIds([]);
       setShowGroupModal(false);
       await selectChat(payload.chat.id);
@@ -2353,6 +2426,133 @@ export default function ChatPage() {
     setGroupMemberIds((prev) =>
       prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
     );
+  };
+
+  const toggleNavSection = (sectionId: string) => {
+    setCollapsedNavSections((prev) => ({
+      ...prev,
+      [sectionId]: !prev[sectionId]
+    }));
+  };
+
+  const openCategoryManagementModal = () => {
+    if (!canManageChatCategories) {
+      return;
+    }
+    setNewCategoryName('');
+    setShowCategoryManageModal(true);
+  };
+
+  const createChatCategory = async () => {
+    if (!token || !newCategoryName.trim() || !canManageChatCategories) {
+      return;
+    }
+
+    setIsBusy(true);
+    setError(null);
+    try {
+      await api('/api/app/chats/category', token, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'create', name: newCategoryName })
+      });
+      setNewCategoryName('');
+      setInfo('Kategorie erstellt.');
+      await loadBootstrap(token, activeChatId ?? undefined);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Kategorie konnte nicht erstellt werden.');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const renameChatCategory = async (categoryId: string) => {
+    if (!token || !canManageChatCategories) {
+      return;
+    }
+    const name = categoryRenameDrafts[categoryId]?.trim() ?? '';
+    if (!name) {
+      return;
+    }
+
+    setIsBusy(true);
+    setError(null);
+    try {
+      await api('/api/app/chats/category', token, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'rename', categoryId, name })
+      });
+      setInfo('Kategorie aktualisiert.');
+      await loadBootstrap(token, activeChatId ?? undefined);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Kategorie konnte nicht aktualisiert werden.');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const moveChatCategory = async (categoryId: string, direction: 'up' | 'down') => {
+    if (!token || !canManageChatCategories) {
+      return;
+    }
+
+    setIsBusy(true);
+    setError(null);
+    try {
+      await api('/api/app/chats/category', token, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'move', categoryId, direction })
+      });
+      await loadBootstrap(token, activeChatId ?? undefined);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Kategorie konnte nicht verschoben werden.');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const deleteChatCategory = async (categoryId: string) => {
+    if (!token || !canManageChatCategories) {
+      return;
+    }
+    const confirmed = window.confirm('Kategorie wirklich löschen? Zugeordnete Gruppen werden in "Ohne Kategorie" verschoben.');
+    if (!confirmed) {
+      return;
+    }
+
+    setIsBusy(true);
+    setError(null);
+    try {
+      await api('/api/app/chats/category', token, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'delete', categoryId })
+      });
+      setInfo('Kategorie gelöscht.');
+      await loadBootstrap(token, activeChatId ?? undefined);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Kategorie konnte nicht gelöscht werden.');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const assignGroupCategory = async (chatId: string, categoryId: string) => {
+    if (!token || !canManageChatCategories) {
+      return;
+    }
+
+    setIsBusy(true);
+    setError(null);
+    try {
+      await api('/api/app/chats/category', token, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'assign_chat', chatId, categoryId: categoryId || null })
+      });
+      await loadBootstrap(token, activeChatId ?? undefined);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Gruppe konnte keiner Kategorie zugeordnet werden.');
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   const startDirect = async (targetUserId: string) => {
@@ -2911,6 +3111,30 @@ export default function ChatPage() {
     router.replace('/');
   };
 
+  const renderChatNavButton = (chat: AppChatSummary, subtitle?: string) => (
+    <button
+      key={chat.id}
+      className={`server-chat-item ${chat.id === activeChatId ? 'active' : ''}`}
+      type="button"
+      onClick={() => void selectChat(chat.id)}
+      title={chat.name}
+    >
+      <span className={`server-chat-item-prefix kind-${chat.kind}`}>{chatNavPrefix(chat.kind)}</span>
+      <span className="server-chat-item-copy">
+        <span className="server-chat-item-name">{chat.name}</span>
+        {subtitle ? <span className="server-chat-item-meta">{subtitle}</span> : null}
+      </span>
+      <span className="server-chat-item-badges">
+        {chat.mentionCount > 0 ? (
+          <span className="mention-badge">{chat.mentionCount > 99 ? '99+' : chat.mentionCount}</span>
+        ) : null}
+        {chat.unreadCount > 0 ? (
+          <span className="unread-badge">{chat.unreadCount > 99 ? '99+' : chat.unreadCount}</span>
+        ) : null}
+      </span>
+    </button>
+  );
+
   if (!bootstrap || !me) {
     return (
       <motion.main className="py-4" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.38 }}>
@@ -2931,45 +3155,136 @@ export default function ChatPage() {
         transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
       >
         <motion.aside
-          className="server-rail hidden md:flex"
+          className="server-rail"
           initial={{ opacity: 0, x: -18 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.34, delay: 0.08 }}
         >
-
-          <button
-            className="btn-soft px-2 py-1 text-[11px] uppercase"
-            onClick={() => {
-              setGroupName('');
-              setGroupMemberIds([]);
-              setDiscoverQuery('');
-              setShowGroupModal(true);
-            }}
-          >
-            + Gruppe
-          </button>
-
-          <motion.button whileHover={{ scale: 1.07, y: -1 }} whileTap={{ scale: 0.96 }} className="server-pill active" onClick={() => void selectChat(activeChatId ?? chats[0]?.id ?? '')}>
-            {initials(me)}
-          </motion.button>
-          {railChats.map((chat) => (
-            <motion.button
-              key={chat.id}
-              whileHover={{ scale: 1.07, y: -1 }}
-              whileTap={{ scale: 0.96 }}
-              className={`server-pill ${chat.id === activeChatId ? 'active' : ''}`}
-              onClick={() => void selectChat(chat.id)}
-              title={chat.name}
-            >
-              {chat.kind === 'group' ? '#' : chat.kind === 'direct' ? 'DM' : 'GL'}
-              {chat.mentionCount > 0 ? (
-                <span className="mention-badge mention-badge-float">{chat.mentionCount > 99 ? '99+' : chat.mentionCount}</span>
+          <div className="server-rail-header">
+            <button className="server-identity" type="button" onClick={() => void openProfile(me.id)}>
+              <Avatar user={me} size={38} sessionToken={token} />
+              <span className="server-identity-copy">
+                <strong>{me.fullName}</strong>
+                <span>{roleLabel(me.role)}</span>
+              </span>
+            </button>
+            <div className="server-rail-actions">
+              <button
+                className="btn-soft px-2 py-1 text-[11px] uppercase"
+                type="button"
+                onClick={() => {
+                  setGroupName('');
+                  setGroupCategoryId(chatCategories[0]?.id ?? '');
+                  setGroupMemberIds([]);
+                  setDiscoverQuery('');
+                  setShowGroupModal(true);
+                }}
+              >
+                + Gruppe
+              </button>
+              {canManageChatCategories ? (
+                <button className="btn-soft px-2 py-1 text-[11px] uppercase" type="button" onClick={openCategoryManagementModal}>
+                  Kategorien
+                </button>
               ) : null}
-              {chat.unreadCount > 0 ? (
-                <span className="unread-badge unread-badge-float">{chat.unreadCount > 99 ? '99+' : chat.unreadCount}</span>
+            </div>
+          </div>
+
+          <div className="server-sections">
+            {globalChats.length > 0 ? (
+              <section className="server-section">
+                <button className="server-section-toggle" type="button" onClick={() => toggleNavSection('global')}>
+                  <span>Global</span>
+                  <span>{collapsedNavSections.global ? '+' : '-'}</span>
+                </button>
+                {!collapsedNavSections.global ? (
+                  <div className="server-chat-list">
+                    {globalChats.map((chat) => renderChatNavButton(chat))}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
+            {groupedCategoryChats.map(({ category, chats: categoryChats }) => {
+              const sectionKey = `category:${category.id}`;
+              const collapsed = collapsedNavSections[sectionKey] === true;
+              return (
+                <section key={category.id} className="server-section">
+                  <button className="server-section-toggle" type="button" onClick={() => toggleNavSection(sectionKey)}>
+                    <span>{category.name}</span>
+                    <span>{collapsed ? '+' : '-'}</span>
+                  </button>
+                  {!collapsed ? (
+                    <div className="server-chat-list">
+                      {categoryChats.length > 0 ? categoryChats.map((chat) => renderChatNavButton(chat)) : (
+                        <p className="server-section-empty">Noch keine Gruppen in dieser Kategorie.</p>
+                      )}
+                    </div>
+                  ) : null}
+                </section>
+              );
+            })}
+
+            {uncategorizedGroupChats.length > 0 || canManageChatCategories ? (
+              <section className="server-section">
+                <button className="server-section-toggle" type="button" onClick={() => toggleNavSection('uncategorized')}>
+                  <span>Ohne Kategorie</span>
+                  <span>{collapsedNavSections.uncategorized ? '+' : '-'}</span>
+                </button>
+                {!collapsedNavSections.uncategorized ? (
+                  <div className="server-chat-list">
+                    {uncategorizedGroupChats.length > 0 ? uncategorizedGroupChats.map((chat) => renderChatNavButton(chat)) : (
+                      <p className="server-section-empty">Alle sichtbaren Gruppen sind bereits einsortiert.</p>
+                    )}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
+            <section className="server-section">
+              <button className="server-section-toggle" type="button" onClick={() => toggleNavSection('direct')}>
+                <span>Direktnachrichten</span>
+                <span>{collapsedNavSections.direct ? '+' : '-'}</span>
+              </button>
+              {!collapsedNavSections.direct ? (
+                <div className="server-chat-list">
+                  {directChats.length > 0 ? directChats.map((chat) => renderChatNavButton(chat)) : (
+                    <p className="server-section-empty">Noch keine 1:1-Chats gestartet.</p>
+                  )}
+                </div>
               ) : null}
-            </motion.button>
-          ))}
+            </section>
+
+            {archivedChats.length > 0 ? (
+              <section className="server-section server-section-archived">
+                <button
+                  className="server-section-toggle"
+                  type="button"
+                  onClick={() =>
+                    void updateUserPreferences(
+                      { expandArchivedChats: !userPreferences.expandArchivedChats },
+                      archivedSectionExpanded ? 'Archiv eingeklappt.' : 'Archiv aufgeklappt.'
+                    )
+                  }
+                >
+                  <span>Archiv</span>
+                  <span>{archivedSectionExpanded ? '-' : '+'}</span>
+                </button>
+                {archivedSectionExpanded ? (
+                  <div className="server-chat-list">
+                    {archivedChats.map((chat) =>
+                      renderChatNavButton(
+                        chat,
+                        chat.kind === 'group'
+                          ? (categoryLookup.get(chat.categoryId ?? '')?.name ?? 'Ohne Kategorie')
+                          : chatKindLabel(chat.kind)
+                      )
+                    )}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+          </div>
         </motion.aside>
 
         <motion.section
@@ -4322,6 +4637,104 @@ export default function ChatPage() {
         </motion.div>
       ) : null}
 
+      {showCategoryManageModal ? (
+        <motion.div className="modal-overlay" style={{ zIndex: 80 }} onClick={() => setShowCategoryManageModal(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+          <motion.div ref={categoryManageModalRef} role="dialog" aria-modal="true" aria-labelledby="category-manage-dialog-title" tabIndex={-1} className="modal-card" onClick={(event) => event.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}>
+            <h2 id="category-manage-dialog-title" className="text-lg font-semibold text-slate-100">Chat-Kategorien verwalten</h2>
+            <p className="surface-muted mt-1 text-xs">
+              Kategorien strukturieren nur Gruppenchats. Direktnachrichten bleiben immer im eigenen Bereich.
+            </p>
+
+            <section className="mt-4">
+              <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Neue Kategorie</h3>
+              <div className="mt-2 flex gap-2">
+                <input
+                  className="glass-input text-sm"
+                  placeholder="z.B. Mathe"
+                  value={newCategoryName}
+                  onChange={(event) => setNewCategoryName(event.target.value)}
+                />
+                <button className="btn-primary px-3 py-2 text-sm" type="button" disabled={isBusy || !newCategoryName.trim()} onClick={() => void createChatCategory()}>
+                  Erstellen
+                </button>
+              </div>
+            </section>
+
+            <section className="mt-4">
+              <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Bestehende Kategorien</h3>
+              <div className="mt-2 max-h-60 space-y-2 overflow-y-auto">
+                {chatCategories.map((category, index) => (
+                  <div key={category.id} className="rounded-lg border border-slate-700/70 bg-slate-900/45 p-3">
+                    <div className="flex gap-2">
+                      <input
+                        className="glass-input text-sm"
+                        value={categoryRenameDrafts[category.id] ?? category.name}
+                        onChange={(event) => setCategoryRenameDrafts((prev) => ({ ...prev, [category.id]: event.target.value }))}
+                      />
+                      <button className="btn-soft px-3 py-2 text-xs" type="button" disabled={isBusy} onClick={() => void renameChatCategory(category.id)}>
+                        Speichern
+                      </button>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <span className="surface-muted text-[11px]">{category.groupCount} Gruppen</span>
+                      <button className="btn-soft px-2 py-1 text-[11px]" type="button" disabled={isBusy || index === 0} onClick={() => void moveChatCategory(category.id, 'up')}>
+                        Nach oben
+                      </button>
+                      <button className="btn-soft px-2 py-1 text-[11px]" type="button" disabled={isBusy || index === chatCategories.length - 1} onClick={() => void moveChatCategory(category.id, 'down')}>
+                        Nach unten
+                      </button>
+                      <button className="btn-soft btn-danger px-2 py-1 text-[11px]" type="button" disabled={isBusy} onClick={() => void deleteChatCategory(category.id)}>
+                        Löschen
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {chatCategories.length === 0 ? <p className="surface-muted text-sm">Noch keine Kategorien vorhanden.</p> : null}
+              </div>
+            </section>
+
+            <section className="mt-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="surface-muted text-xs font-semibold uppercase tracking-wide">Sichtbare Gruppen zuordnen</h3>
+                  <p className="surface-muted mt-1 text-[11px]">Hier siehst du die Gruppen, in denen du aktuell Mitglied bist.</p>
+                </div>
+              </div>
+              <div className="mt-2 max-h-60 space-y-2 overflow-y-auto">
+                {assignableVisibleGroupChats.map((chat) => (
+                  <div key={chat.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-700/70 bg-slate-900/45 p-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm text-slate-100">{chat.name}</p>
+                      <p className="surface-muted text-[11px]">
+                        Aktuell: {chat.categoryId ? (categoryLookup.get(chat.categoryId)?.name ?? 'Ohne Kategorie') : 'Ohne Kategorie'}
+                      </p>
+                    </div>
+                    <select
+                      className="glass-input max-w-[12rem] text-xs"
+                      value={chat.categoryId ?? ''}
+                      disabled={isBusy}
+                      onChange={(event) => void assignGroupCategory(chat.id, event.target.value)}
+                    >
+                      <option value="">Ohne Kategorie</option>
+                      {chatCategories.map((category) => (
+                        <option key={`${chat.id}-${category.id}`} value={category.id}>
+                          {category.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+                {assignableVisibleGroupChats.length === 0 ? <p className="surface-muted text-sm">Du bist aktuell in keinen Gruppen.</p> : null}
+              </div>
+            </section>
+
+            <button className="btn-soft mt-4 w-full" type="button" onClick={() => setShowCategoryManageModal(false)}>
+              Schliessen
+            </button>
+          </motion.div>
+        </motion.div>
+      ) : null}
+
       {showGroupModal ? (
         <motion.div className="modal-overlay" onClick={() => setShowGroupModal(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
           <motion.div ref={groupCreateModalRef} role="dialog" aria-modal="true" aria-labelledby="group-create-dialog-title" tabIndex={-1} className="modal-card" onClick={(event) => event.stopPropagation()} initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}>
@@ -4336,6 +4749,21 @@ export default function ChatPage() {
                 value={groupName}
                 onChange={(event) => setGroupName(event.target.value)}
               />
+            </label>
+
+            <label className="mt-3 block space-y-1">
+              <span className="surface-muted text-xs uppercase tracking-wide">Kategorie</span>
+              <select className="glass-input text-sm" value={groupCategoryId} onChange={(event) => setGroupCategoryId(event.target.value)}>
+                <option value="">Ohne Kategorie</option>
+                {chatCategories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+              <p className="surface-muted text-[11px]">
+                Gruppenchats können in vorhandene Kategorien einsortiert werden. DMs bleiben separat.
+              </p>
             </label>
 
             <label className="mt-3 block space-y-1">
@@ -4369,6 +4797,11 @@ export default function ChatPage() {
               <button className="btn-soft" onClick={() => setShowGroupModal(false)}>
                 Abbrechen
               </button>
+              {canManageChatCategories ? (
+                <button className="btn-soft" type="button" onClick={openCategoryManagementModal}>
+                  Kategorien verwalten
+                </button>
+              ) : null}
               <button disabled={isBusy || !groupName.trim()} className="btn-primary" onClick={() => void createGroup()}>
                 {isBusy ? 'Erstelle...' : 'Gruppe erstellen'}
               </button>

@@ -72,6 +72,16 @@ export type AppChatPreferences = {
   chatBackgroundStyle: AppChatBackgroundStyle | null;
 };
 
+export type AppChatCategory = {
+  id: string;
+  name: string;
+  createdBy: string | null;
+  createdAt: number;
+  updatedAt: number;
+  sortOrder: number;
+  groupCount: number;
+};
+
 export type FriendRequestState = 'pending' | 'accepted' | 'declined' | 'cancelled';
 
 export type FriendRequestItem = {
@@ -88,6 +98,7 @@ export type AppChatSummary = {
   id: string;
   name: string;
   kind: ChatKind;
+  categoryId: string | null;
   createdBy: string | null;
   createdAt: number;
   updatedAt: number;
@@ -260,6 +271,7 @@ export type AppGroupSettings = {
 export type AppBootstrap = {
   me: AppUserProfile;
   preferences: AppUserPreferences;
+  chatCategories: AppChatCategory[];
   chats: AppChatSummary[];
   activeChatId: string | null;
   friends: AppUserProfile[];

@@ -121,9 +121,25 @@ async function createSchema(): Promise<void> {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS chat_categories (
+      id CHAR(36) PRIMARY KEY,
+      name VARCHAR(80) NOT NULL,
+      name_norm VARCHAR(80) NOT NULL,
+      sort_order INT NOT NULL DEFAULT 0,
+      created_by CHAR(36) NULL,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      UNIQUE KEY uq_chat_categories_name_norm (name_norm),
+      INDEX idx_chat_categories_sort_order (sort_order),
+      CONSTRAINT fk_chat_categories_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS chats (
       id CHAR(36) PRIMARY KEY,
       name VARCHAR(80) NOT NULL,
+      chat_category_id CHAR(36) NULL,
       created_by CHAR(36) NULL,
       created_at BIGINT NOT NULL,
       updated_at BIGINT NOT NULL,
@@ -142,9 +158,11 @@ async function createSchema(): Promise<void> {
       deactivated_by CHAR(36) NULL,
       INDEX idx_chats_is_global (is_global),
       INDEX idx_chats_chat_type (chat_type),
+      INDEX idx_chats_chat_category_id (chat_category_id),
       UNIQUE KEY uq_chats_dm_key (dm_key),
       UNIQUE KEY uq_chats_group_invite_code (group_invite_code),
       INDEX idx_chats_deactivated_at (deactivated_at),
+      CONSTRAINT fk_chats_chat_category FOREIGN KEY (chat_category_id) REFERENCES chat_categories(id) ON DELETE SET NULL,
       CONSTRAINT fk_chats_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
       CONSTRAINT fk_chats_deactivated_by FOREIGN KEY (deactivated_by) REFERENCES users(id) ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -514,6 +532,23 @@ async function createSchema(): Promise<void> {
   if (!(await hasColumn(pool, 'uploads', 'chat_id'))) {
     await pool.query('ALTER TABLE uploads ADD COLUMN chat_id CHAR(36) NULL AFTER id');
   }
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS chat_categories (
+      id CHAR(36) PRIMARY KEY,
+      name VARCHAR(80) NOT NULL,
+      name_norm VARCHAR(80) NOT NULL,
+      sort_order INT NOT NULL DEFAULT 0,
+      created_by CHAR(36) NULL,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      UNIQUE KEY uq_chat_categories_name_norm (name_norm),
+      INDEX idx_chat_categories_sort_order (sort_order),
+      CONSTRAINT fk_chat_categories_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `);
+  if (!(await hasColumn(pool, 'chats', 'chat_category_id'))) {
+    await pool.query('ALTER TABLE chats ADD COLUMN chat_category_id CHAR(36) NULL AFTER name');
+  }
   if (!(await hasColumn(pool, 'chats', 'chat_type'))) {
     await pool.query("ALTER TABLE chats ADD COLUMN chat_type ENUM('global','group','direct') NOT NULL DEFAULT 'group' AFTER is_global");
   }
@@ -544,11 +579,20 @@ async function createSchema(): Promise<void> {
   if (!(await hasIndex(pool, 'chats', 'idx_chats_chat_type'))) {
     await pool.query('ALTER TABLE chats ADD INDEX idx_chats_chat_type (chat_type)');
   }
+  if (!(await hasIndex(pool, 'chats', 'idx_chats_chat_category_id'))) {
+    await pool.query('ALTER TABLE chats ADD INDEX idx_chats_chat_category_id (chat_category_id)');
+  }
   if (!(await hasIndex(pool, 'chats', 'uq_chats_dm_key'))) {
     await pool.query('ALTER TABLE chats ADD UNIQUE INDEX uq_chats_dm_key (dm_key)');
   }
   if (!(await hasIndex(pool, 'chats', 'uq_chats_group_invite_code'))) {
     await pool.query('ALTER TABLE chats ADD UNIQUE INDEX uq_chats_group_invite_code (group_invite_code)');
+  }
+  if (!(await hasIndex(pool, 'chat_categories', 'uq_chat_categories_name_norm'))) {
+    await pool.query('ALTER TABLE chat_categories ADD UNIQUE INDEX uq_chat_categories_name_norm (name_norm)');
+  }
+  if (!(await hasIndex(pool, 'chat_categories', 'idx_chat_categories_sort_order'))) {
+    await pool.query('ALTER TABLE chat_categories ADD INDEX idx_chat_categories_sort_order (sort_order)');
   }
 
   if (!(await hasColumn(pool, 'chat_memberships', 'member_role'))) {
